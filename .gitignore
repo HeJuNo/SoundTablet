@@ -1,0 +1,10 @@
+build/
+*.xcodeproj
+DerivedData/
+.DS_Store
+fastlane/report.xml
+fastlane/new_certificate_needed.txt
+artifacts/
+buildlog/
+screenshots/
+TestResults.xcresult

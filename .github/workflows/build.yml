@@ -1,0 +1,106 @@
+name: 4. SoundTablet bauen
+run-name: SoundTablet bauen (${{ github.ref_name }})
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    # Reine Textaenderungen erzeugen keinen TestFlight-Build.
+    paths-ignore:
+      - "**.md"
+      - ".gitignore"
+    #
+    # Einzelnen Push ueberspringen: einen dieser Bausteine irgendwo in die
+    # Commit-Nachricht schreiben. GitHub wertet sie selbst aus, es braucht
+    # dafuer keine Bedingung in diesem Workflow:
+    #
+    #   [skip ci]  [ci skip]  [no ci]  [skip actions]  [actions skip]
+    #
+    # Alternativ als Trailer am Ende der Nachricht:  skip-checks: true
+    #
+    # Gilt nur fuer push und pull_request. Ein Handstart ueber "Run
+    # workflow" und der Monatslauf bauen weiterhin, egal was im Commit
+    # steht -- was auch richtig so ist: beide sind ausdrueckliche
+    # Entscheidungen, keine Nebenwirkung eines Pushes.
+  schedule:
+    # Am 1. jedes Monats um 06:17 UTC neu bauen, damit der TestFlight-Build
+    # (90 Tage gueltig) nie ablaeuft. Abschalten: Variable SCHEDULED_BUILD=false.
+    - cron: "17 6 1 * *"
+
+# Laeufe auf main werden gereiht, nicht parallel gefahren. Die Build-Nummer
+# entsteht aus "letzte TestFlight-Nummer + 1"; zwei gleichzeitige Laeufe
+# wuerden dieselbe Nummer vergeben und der zweite Upload scheitern.
+# Nicht abbrechen: ein laufender Upload soll fertig werden.
+concurrency:
+  group: testflight-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  check_certs:
+    name: Zertifikate pruefen
+    # SCHEDULED_BUILD steuert nur den Monatslauf. Push und Handstart
+    # bauen immer -- sonst wuerde das Abschalten des Monatslaufs auch
+    # jeden Push stillegen, weil "build" auf diesen Job wartet.
+    if: github.event_name != 'schedule' || vars.SCHEDULED_BUILD != 'false'
+    uses: ./.github/workflows/create_certs.yml
+    secrets: inherit
+
+  test:
+    name: Tests
+    # Rote Tests halten den Upload an: "build" wartet auf diesen Job.
+    uses: ./.github/workflows/test.yml
+
+  build:
+    name: Bauen und hochladen
+    needs: [check_certs, test]
+    runs-on: macos-26
+    env:
+      TEAMID: ${{ secrets.TEAMID }}
+      GH_PAT: ${{ secrets.GH_PAT }}
+      MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
+      FASTLANE_KEY_ID: ${{ secrets.FASTLANE_KEY_ID }}
+      FASTLANE_ISSUER_ID: ${{ secrets.FASTLANE_ISSUER_ID }}
+      FASTLANE_KEY: ${{ secrets.FASTLANE_KEY }}
+      BUNDLE_ID: ${{ vars.BUNDLE_ID }}
+      APP_VERSION: ${{ vars.APP_VERSION }}
+    steps:
+      - name: Xcode auswaehlen
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - uses: actions/checkout@v5
+
+      - name: Xcode-Projekt erzeugen (XcodeGen)
+        run: |
+          brew install xcodegen
+          xcodegen generate
+
+      - name: Abhaengigkeiten installieren
+        run: bundle install
+
+      - name: Uhr synchronisieren
+        run: sudo sntp -sS time.windows.com
+
+      - name: Signierte IPA bauen
+        run: bundle exec fastlane build
+
+      - name: Zu TestFlight hochladen
+        run: bundle exec fastlane release
+
+      - name: Bildschirmfotos aufnehmen
+        # Sichtbares Protokoll jedes Builds, hell und dunkel (Spec 13).
+        # Ein Fehler hier darf den fertigen Upload nicht nachtraeglich
+        # rot faerben.
+        continue-on-error: true
+        run: bash scripts/screenshots.sh screenshots
+
+      - name: Build-Protokoll, IPA und Bildschirmfotos sichern
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-artifacts
+          path: |
+            artifacts
+            buildlog
+            screenshots

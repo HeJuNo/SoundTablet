@@ -1,0 +1,70 @@
+name: 5. SoundTablet testen
+run-name: SoundTablet testen (${{ github.ref_name }})
+
+on:
+  workflow_dispatch:
+  # Von build.yml aufgerufen: ein roter Test haelt den TestFlight-Upload an.
+  workflow_call:
+  push:
+    # Auf main laeuft stattdessen build.yml, die diesen Workflow aufruft.
+    branches-ignore: [main]
+    paths-ignore:
+      - "**.md"
+      - ".gitignore"
+  pull_request:
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Unit-Tests
+    runs-on: macos-26
+    steps:
+      - name: Xcode auswaehlen
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - uses: actions/checkout@v5
+
+      - name: Xcode-Projekt erzeugen (XcodeGen)
+        run: |
+          brew install xcodegen
+          xcodegen generate
+
+      - name: Simulator waehlen
+        id: sim
+        # Namen und Versionen der Simulatoren wechseln mit jedem Image,
+        # deshalb wird zur Laufzeit das erste verfuegbare iPhone genommen.
+        run: |
+          udid=$(xcrun simctl list devices available \
+            | grep -E '^[[:space:]]+iPhone' \
+            | head -1 \
+            | sed -E 's/.*\(([0-9A-Fa-f-]{36})\).*/\1/')
+          if [ -z "$udid" ]; then
+            echo "Kein iPhone-Simulator verfuegbar:"
+            xcrun simctl list devices available
+            exit 1
+          fi
+          echo "udid=$udid" >> "$GITHUB_OUTPUT"
+          xcrun simctl list devices available | grep "$udid"
+
+      - name: Tests laufen lassen
+        run: |
+          set -o pipefail
+          xcodebuild test \
+            -scheme SoundTablet \
+            -collect-test-diagnostics never \
+            -destination "id=${{ steps.sim.outputs.udid }}" \
+            -resultBundlePath TestResults.xcresult \
+            CODE_SIGNING_ALLOWED=NO \
+            | tail -60
+
+      - name: Testprotokoll sichern
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: TestResults.xcresult

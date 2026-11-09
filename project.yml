@@ -1,0 +1,66 @@
+# XcodeGen definition – `xcodegen generate` creates SoundTablet.xcodeproj
+name: SoundTablet
+options:
+  createIntermediateGroups: true
+  deploymentTarget:
+    iOS: "27.0"
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    IPHONEOS_DEPLOYMENT_TARGET: "27.0"
+    MARKETING_VERSION: "1.0.0"
+    CURRENT_PROJECT_VERSION: "1"
+    VERSIONING_SYSTEM: apple-generic
+targets:
+  SoundTablet:
+    type: application
+    platform: iOS
+    deploymentTarget: "27.0"
+    sources:
+      - Sources
+    scheme:
+      testTargets:
+        - SoundTabletTests
+    settings:
+      base:
+        # Placeholder for local builds; CI sets com.<TEAMID>.soundtablet or BUNDLE_ID.
+        PRODUCT_BUNDLE_IDENTIFIER: com.example.soundtablet
+        PRODUCT_NAME: SoundTablet
+        TARGETED_DEVICE_FAMILY: "1,2"
+        CODE_SIGN_STYLE: Automatic
+    # iCloud Documents: local-first app, mirrored to iCloud Drive (visible in Files).
+    entitlements:
+      path: SoundTablet.entitlements
+      properties:
+        com.apple.developer.icloud-container-identifiers: ["iCloud.$(PRODUCT_BUNDLE_IDENTIFIER)"]
+        com.apple.developer.icloud-services: [CloudDocuments]
+        com.apple.developer.ubiquity-container-identifiers: ["iCloud.$(PRODUCT_BUNDLE_IDENTIFIER)"]
+    info:
+      path: Info.plist
+      properties:
+        NSUbiquitousContainers:
+          "iCloud.$(PRODUCT_BUNDLE_IDENTIFIER)":
+            NSUbiquitousContainerIsDocumentScopePublic: true
+            NSUbiquitousContainerName: SoundTablet
+            NSUbiquitousContainerSupportedFolderLevels: Any
+        CFBundleDisplayName: SoundTablet
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        UILaunchScreen: {}
+        UIBackgroundModes: [audio]
+        ITSAppUsesNonExemptEncryption: false
+        UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
+        UISupportedInterfaceOrientations~ipad: [UIInterfaceOrientationPortrait, UIInterfaceOrientationPortraitUpsideDown, UIInterfaceOrientationLandscapeLeft, UIInterfaceOrientationLandscapeRight]
+  SoundTabletTests:
+    type: bundle.unit-test
+    platform: iOS
+    deploymentTarget: "27.0"
+    sources:
+      - Tests
+    dependencies:
+      - target: SoundTablet
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.example.soundtablet.tests
+        GENERATE_INFOPLIST_FILE: YES
+        TARGETED_DEVICE_FAMILY: "1,2"

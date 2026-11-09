@@ -1,0 +1,302 @@
+import Foundation
+import Observation
+import SwiftUI
+import UIKit
+
+let tilePalette = ["#E5484D", "#F76B15", "#F5B800", "#30A46C", "#0091FF", "#6E56CF", "#D6409F", "#8D8D8D"]
+
+extension Color {
+    init(hex: String) {
+        var v: UInt64 = 0
+        Scanner(string: hex.trimmingCharacters(in: CharacterSet(charactersIn: "#"))).scanHexInt64(&v)
+        self.init(red: Double((v >> 16) & 0xFF) / 255, green: Double((v >> 8) & 0xFF) / 255, blue: Double(v & 0xFF) / 255)
+    }
+}
+
+struct SyncConfig: Sendable {
+    var local: URL
+    var cloud: @Sendable () -> URL?
+}
+
+@MainActor @Observable final class AppModel {
+    var boards: [Board] = []
+    var activeBoardID: Board.ID?
+    private(set) var playing: Set<Track.ID> = []
+    private(set) var unavailable: Set<Track.ID> = []
+    var isPaused = false
+    /// Settings applied to every newly imported track; persisted in UserDefaults.
+    var defaults: TrackSettings = .default {
+        didSet { userDefaults.set(try? JSONEncoder().encode(defaults), forKey: "defaultTrackSettings") }
+    }
+    /// Loudness (dBFS) of the reference file chosen in Defaults; persisted in UserDefaults.
+    private(set) var referenceDB: Double?
+    private(set) var referenceName: String?
+    var lastError: String?
+    var editingTrackID: Track.ID?
+    private(set) var syncStatus = "Not synced yet"
+    private(set) var isSyncing = false
+    var showingDefaults = false
+
+    @ObservationIgnored let store: BoardStore
+    @ObservationIgnored private let userDefaults: UserDefaults
+    @ObservationIgnored private let syncConfig: SyncConfig?
+    @ObservationIgnored private(set) var engine: AudioEngine!
+    @ObservationIgnored private let automation = AutomationEngine()
+
+    init(store: BoardStore, manualRendering: Bool = false, userDefaults: UserDefaults = .standard, sync: SyncConfig? = nil) {
+        self.store = store
+        self.syncConfig = sync
+        self.userDefaults = userDefaults
+        if let d = userDefaults.data(forKey: "defaultTrackSettings"), let v = try? JSONDecoder().decode(TrackSettings.self, from: d) {
+            defaults = v
+        }
+        engine = AudioEngine(onEvent: { [weak self] in self?.handle($0) }, manualRendering: manualRendering)
+        if let r = userDefaults.object(forKey: "referenceDB") as? Double {
+            referenceDB = r; referenceName = userDefaults.string(forKey: "referenceName"); engine.referenceDB = r
+        }
+    }
+
+    var activeBoard: Board? { boards.first { $0.id == activeBoardID } }
+
+    // MARK: loading / persistence
+
+    func load() async {
+        do { boards = try await store.loadBoards() } catch { lastError = error.localizedDescription }
+        if activeBoard == nil { activeBoardID = boards.first?.id }
+        for b in boards { for t in b.tracks { await register(t, in: b.id) } }
+    }
+
+    private func register(_ t: Track, in board: Board.ID) async {
+        if let url = try? await store.audioURL(board: board, fileName: t.fileName), (try? engine.load(t, url: url)) != nil {
+            unavailable.remove(t.id)
+        } else {
+            unavailable.insert(t.id)
+        }
+    }
+
+    private func persist(_ id: Board.ID) async {
+        guard let b = boards.first(where: { $0.id == id }) else { return }
+        do { try await store.save(b) } catch { lastError = error.localizedDescription }
+    }
+
+    private func boardID(of track: Track.ID) -> Board.ID? {
+        boards.first { $0.tracks.contains { $0.id == track } }?.id
+    }
+
+    // MARK: editing
+
+    func addBoard(name: String) async {
+        let b = Board(id: UUID(), name: name, colorHex: tilePalette[boards.count % tilePalette.count], sortIndex: boards.count)
+        boards.append(b)
+        activeBoardID = b.id
+        await persist(b.id)
+    }
+
+    func importTracks(_ urls: [URL]) async {
+        guard let bid = activeBoardID else { return }
+        for url in urls {
+            let scoped = url.startAccessingSecurityScopedResource()
+            defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+            let tid = UUID()
+            do {
+                let file = try await store.importAudio(from: url, into: bid, as: tid)
+                guard let i = boards.firstIndex(where: { $0.id == bid }) else { return }
+                var t = Track(id: tid, name: url.deletingPathExtension().lastPathComponent, fileName: file,
+                              colorHex: tilePalette[boards[i].tracks.count % tilePalette.count])
+                t.settings = defaults
+                boards[i].tracks.append(t)
+                await persist(bid)
+                await register(t, in: bid)
+            } catch { lastError = "\(url.lastPathComponent): \(error.localizedDescription)" }
+        }
+    }
+
+    func track(_ id: Track.ID) -> Track? { boards.lazy.flatMap(\.tracks).first { $0.id == id } }
+
+    /// In-memory replace; returns the board id. Synchronous so UI bindings never see stale values.
+    private func apply(_ track: Track) -> Board.ID? {
+        guard let bid = boardID(of: track.id), let bi = boards.firstIndex(where: { $0.id == bid }),
+              let ti = boards[bi].tracks.firstIndex(where: { $0.id == track.id }) else { return nil }
+        boards[bi].tracks[ti] = track
+        return bid
+    }
+
+    /// Persist + re-register the *current* state (not a captured copy), so racing edits end consistent.
+    private func settle(_ id: Track.ID, _ bid: Board.ID) async {
+        await persist(bid)
+        if let t = track(id) { await register(t, in: bid) }
+    }
+
+    func update(_ track: Track) async {
+        guard let bid = apply(track) else { return }
+        await settle(track.id, bid)
+    }
+
+    /// Synchronous edit for bindings; saving happens in the background.
+    func edit(_ id: Track.ID, _ change: (inout Track) -> Void) {
+        guard var t = track(id) else { return }
+        change(&t)
+        guard let bid = apply(t) else { return }
+        Task { await settle(id, bid) }
+    }
+
+    /// Measures the chosen file and keeps only its loudness (the file itself is not stored).
+    func setReference(_ url: URL) async {
+        let scoped = url.startAccessingSecurityScopedResource()
+        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+        do {
+            let db = try await loudnessDB(url: url)
+            referenceDB = db; referenceName = url.lastPathComponent; engine.referenceDB = db
+            userDefaults.set(db, forKey: "referenceDB"); userDefaults.set(url.lastPathComponent, forKey: "referenceName")
+        } catch { lastError = error.localizedDescription }
+    }
+
+    func clearReference() {
+        referenceDB = nil; referenceName = nil; engine.referenceDB = nil
+        userDefaults.removeObject(forKey: "referenceDB"); userDefaults.removeObject(forKey: "referenceName")
+    }
+
+    /// Turning on measures the track once (cached in its settings); applies from the next play.
+    func setNormalize(_ id: Track.ID, _ on: Bool) async {
+        guard var t = track(id) else { return }
+        if on, t.settings.loudnessDB == nil {
+            guard let url = await audioURL(for: id), let db = try? await loudnessDB(url: url) else {
+                lastError = "Could not measure this track's loudness"; return
+            }
+            t.settings.loudnessDB = db
+        }
+        t.settings.normalize = on
+        await update(t)
+    }
+
+    func normalizeAll(_ on: Bool) async {
+        for id in boards.flatMap(\.tracks).map(\.id) { await setNormalize(id, on) }
+    }
+
+    func audioURL(for id: Track.ID, imageFile: Bool = false) async -> URL? {
+        guard let bid = boardID(of: id), let t = track(id), let name = imageFile ? t.imageFileName : t.fileName else { return nil }
+        return try? await store.audioURL(board: bid, fileName: name)
+    }
+
+    /// Stores a 300 px JPEG thumbnail next to the audio; nil removes the image reference (file stays, see deleteTrack shortcut).
+    func setImage(_ id: Track.ID, data: Data?) async {
+        guard let bid = boardID(of: id) else { return }
+        var name: String? = nil
+        if let data, let img = UIImage(data: data)?.preparingThumbnail(of: CGSize(width: 300, height: 300)),
+           let jpeg = img.jpegData(compressionQuality: 0.8) {
+            let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).jpg")
+            defer { try? FileManager.default.removeItem(at: tmp) }
+            do {
+                try jpeg.write(to: tmp)
+                name = try await store.importAudio(from: tmp, into: bid, as: UUID())
+            } catch { lastError = error.localizedDescription; return }
+        }
+        guard var t = track(id) else { return }
+        t.imageFileName = name
+        await update(t)
+    }
+
+    /// Clamps to the file: out before/at in or past the end means "to the end"; in is kept inside the file.
+    func setTrim(_ id: Track.ID, trimIn: Double, trimOut: Double?) async {
+        guard let duration = engine.duration(id), var t = boards.flatMap(\.tracks).first(where: { $0.id == id }) else { return }
+        let i = min(max(trimIn, 0), max(duration - 0.05, 0))
+        t.settings.trimIn = i
+        t.settings.trimOut = trimOut.flatMap { $0 > i && $0 < duration ? $0 : nil }
+        await update(t)
+    }
+
+    /// Rejects self-targets and targets that are not on the same board.
+    func addAutomation(to id: Track.ID, _ a: Automation) async {
+        guard let bid = boardID(of: id), a.target != id, boardID(of: a.target) == bid,
+              var t = boards.flatMap(\.tracks).first(where: { $0.id == id }) else { return }
+        t.automations.append(a)
+        await update(t)
+    }
+
+    func removeAutomation(from id: Track.ID, at index: Int) async {
+        guard var t = boards.flatMap(\.tracks).first(where: { $0.id == id }), t.automations.indices.contains(index) else { return }
+        t.automations.remove(at: index)
+        await update(t)
+    }
+
+    /// shortcut: the audio file stays in the board folder (no store API to delete it); add one if disk use matters.
+    func deleteTrack(_ id: Track.ID) async {
+        guard let bid = boardID(of: id), let bi = boards.firstIndex(where: { $0.id == bid }) else { return }
+        engine.stop(id)
+        engine.unload(id)
+        unavailable.remove(id)
+        boards[bi].tracks.removeAll { $0.id == id }
+        for ti in boards[bi].tracks.indices { boards[bi].tracks[ti].automations.removeAll { $0.target == id } }
+        await persist(bid)
+    }
+
+    func moveTrack(_ id: Track.ID, before target: Track.ID) async {
+        guard id != target, let bid = boardID(of: id), bid == boardID(of: target),
+              let bi = boards.firstIndex(where: { $0.id == bid }),
+              let from = boards[bi].tracks.firstIndex(where: { $0.id == id }) else { return }
+        let t = boards[bi].tracks.remove(at: from)
+        let to = boards[bi].tracks.firstIndex(where: { $0.id == target }) ?? boards[bi].tracks.endIndex
+        boards[bi].tracks.insert(t, at: to)
+        await persist(bid)
+    }
+
+    func moveBoard(_ id: Board.ID, before target: Board.ID) async {
+        guard id != target, let from = boards.firstIndex(where: { $0.id == id }) else { return }
+        let b = boards.remove(at: from)
+        boards.insert(b, at: boards.firstIndex(where: { $0.id == target }) ?? boards.endIndex)
+        for i in boards.indices { boards[i].sortIndex = i }
+        for b in boards { await persist(b.id) }
+    }
+
+    // MARK: sync
+
+    /// Mirrors the local store with iCloud Drive off the main thread; playback and editing never wait for it.
+    func syncNow() async {
+        guard let cfg = syncConfig, !isSyncing else { return }
+        isSyncing = true
+        defer { isSyncing = false }
+        let result: Result<SyncReport, Error>? = await Task.detached {
+            guard let cloud = cfg.cloud() else { return nil }
+            return Result { try SyncService(local: cfg.local, cloud: cloud).sync() }
+        }.value
+        switch result {
+        case nil: syncStatus = "iCloud not available"
+        case .failure(let e): syncStatus = "Sync failed: \(e.localizedDescription)"
+        case .success(let r):
+            syncStatus = "Synced \(Date.now.formatted(date: .omitted, time: .shortened)): \(r.copiedToCloud) up, \(r.copiedToLocal) down"
+                + (r.conflicts.isEmpty ? "" : ", \(r.conflicts.count) conflict(s) kept as copies")
+                + (r.errors.isEmpty ? "" : ", \(r.errors.count) file(s) failed")
+                + (r.pendingDownloads > 0 ? ", \(r.pendingDownloads) still downloading" : "")
+            // Always reload after files came down: a stale in-memory board must never be persisted over them.
+            // load() only replaces boards/engine registrations; running voices and `playing` are keyed by id.
+            if r.copiedToLocal > 0 { await load() }
+        }
+    }
+
+    // MARK: playback
+
+    func tap(_ id: Track.ID) {
+        guard !unavailable.contains(id) else { return }
+        if playing.contains(id) { engine.stop(id) } else { engine.play(id) }
+    }
+
+    func togglePause() {
+        isPaused.toggle()
+        if isPaused { engine.pauseAll() } else { engine.resumeAll() }
+    }
+
+    func stopAll(fadeOut: Double = 0) {
+        isPaused = false
+        engine.stopAll(fadeOut: fadeOut)
+    }
+
+    private func handle(_ e: PlaybackEvent) {
+        switch e {
+        case .started(let i): playing.insert(i)
+        case .stopped(let i), .ended(let i): playing.remove(i)
+        }
+        if let bid = boardID(of: e.trackID), let b = boards.first(where: { $0.id == bid }) {
+            automation.handle(e, board: b, control: engine)
+        }
+    }
+}
