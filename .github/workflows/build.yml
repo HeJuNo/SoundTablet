@@ -83,14 +83,7 @@ jobs:
       - name: Zu TestFlight hochladen
         run: bundle exec fastlane release
 
-      - name: Bildschirmfotos aufnehmen
-        # Sichtbares Protokoll jedes Builds, hell und dunkel (Spec 13).
-        # Ein Fehler hier darf den fertigen Upload nicht nachtraeglich
-        # rot faerben.
-        continue-on-error: true
-        run: bash scripts/screenshots.sh screenshots
-
-      - name: Build-Protokoll, IPA und Bildschirmfotos sichern
+      - name: Build-Protokoll und IPA sichern
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -98,4 +91,3 @@ jobs:
           path: |
             artifacts
             buildlog
-            screenshots
