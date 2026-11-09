@@ -5,7 +5,7 @@ struct TrackSettingsView: View {
     let trackID: Track.ID
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
-    @State private var peaks: [Float] = []
+    @State private var suggesting = false
     @State private var photo: PhotosPickerItem?
 
     var body: some View {
@@ -14,6 +14,8 @@ struct TrackSettingsView: View {
                 Form {
                     Section("Track") {
                         TextField("Name", text: bind(t, \.name))
+                        TextField("Second line (optional)", text: Binding(get: { t.subtitle ?? "" },
+                                                                         set: { v in model.edit(trackID) { $0.subtitle = v.isEmpty ? nil : v } }))
                         ColorSwatches(selected: t.colorHex) { c in model.edit(trackID) { $0.colorHex = c } }
                     }
                     Section("Playback") {
@@ -26,12 +28,9 @@ struct TrackSettingsView: View {
                         Stepper("Fade in: \(t.settings.fadeIn, specifier: "%.1f") s", value: bind(t, \.settings.fadeIn), in: 0...10, step: 0.5)
                         Stepper("Fade out: \(t.settings.fadeOut, specifier: "%.1f") s", value: bind(t, \.settings.fadeOut), in: 0...10, step: 0.5)
                     }
-                    Section("Trim") {
-                        if let d = model.engine.duration(trackID), !peaks.isEmpty {
-                            TrimEditorView(peaks: peaks, duration: d, trimIn: t.settings.trimIn, trimOut: t.settings.trimOut) { i, o in
-                                Task { await model.setTrim(trackID, trimIn: i, trimOut: o) }
-                            }
-                        } else { Text("Waveform unavailable").foregroundStyle(.secondary) }
+                    Section("Excerpt & loop") {
+                        AudioEditorView(trackID: trackID)
+                        Button("Find loops & sections", systemImage: "wand.and.sparkles") { suggesting = true }
                     }
                     Section("Automations") { AutomationEditor(track: t) }
                     Section("Image") {
@@ -43,9 +42,7 @@ struct TrackSettingsView: View {
                 .navigationTitle(t.name)
                 .navigationBarTitleDisplayMode(.inline)
                 .toolbar { Button("Done") { dismiss() } }
-                .task(id: t.fileName) {
-                    if let url = await model.audioURL(for: trackID) { peaks = (try? await waveformPeaks(url: url, buckets: 160)) ?? [] }
-                }
+                .sheet(isPresented: $suggesting) { LoopSuggestionsView(trackID: trackID) }
                 .onChange(of: photo) {
                     guard let photo else { return }
                     Task { if let d = try? await photo.loadTransferable(type: Data.self) { await model.setImage(trackID, data: d) } }

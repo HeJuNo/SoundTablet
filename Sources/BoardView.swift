@@ -14,7 +14,9 @@ struct BoardView: View {
                 boardPicker
                 if let board = model.activeBoard {
                     ScrollView {
-                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 130), spacing: 12)], spacing: 12) {
+                        Text(board.name).font(.title2.bold()).frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal).padding(.top, 8).accessibilityAddTraits(.isHeader)
+                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 12)], spacing: 12) {
                             ForEach(board.tracks) { TileView(track: $0) }
                         }
                         .padding()
@@ -26,6 +28,7 @@ struct BoardView: View {
                 GlobalBar()
             }
             .navigationTitle("SoundTablet")
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 Button("Defaults", systemImage: "gearshape") { model.showingDefaults = true }
                 Button("Import", systemImage: "square.and.arrow.down") { importing = true }
@@ -53,8 +56,9 @@ struct BoardView: View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack {
                 ForEach(model.boards) { b in
-                    Button(b.name) { model.activeBoardID = b.id }
+                    Button { model.activeBoardID = b.id } label: { Text(b.name).lineLimit(1).fixedSize() }
                         .buttonStyle(.borderedProminent)
+                        .accessibilityAddTraits(b.id == model.activeBoardID ? .isSelected : [])
                         .tint(b.id == model.activeBoardID ? Color(hex: b.colorHex) : .gray)
                         .draggable(b.id.uuidString)
                         .dropDestination(for: String.self) { items, _ in

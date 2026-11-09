@@ -44,6 +44,7 @@ struct Automation: Codable, Equatable, Sendable {
 struct Track: Codable, Identifiable, Equatable, Sendable {
     let id: UUID
     var name: String
+    var subtitle: String? = nil  // optional second tile line (smaller, regular weight)
     var fileName: String
     var colorHex: String
     var imageFileName: String? = nil

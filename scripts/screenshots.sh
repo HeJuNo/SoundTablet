@@ -43,8 +43,11 @@ for name, f, col in [("Intro Music", 220, "#E5484D"), ("Applause", 330, "#30A46C
     w = wave.open(d + "/" + fn, "wb"); w.setnchannels(1); w.setsampwidth(2); w.setframerate(44100)
     w.writeframes(b"".join(struct.pack("<h", int(12000 * math.sin(2 * math.pi * f * n / 44100))) for n in range(44100)))
     w.close()
+    k = len(tracks)  # vary subtitle and settings so the tile design (second line, icons) is visible
     tracks.append({"id": tid, "name": name, "fileName": fn, "colorHex": col, "automations": [],
-                   "settings": {"volume": 1, "loop": False, "solo": False, "fadeIn": 0, "fadeOut": 0, "trimIn": 0}})
+                   "subtitle": ["2 bars · 120 BPM", None, "Section 2", None, "Loop", "Voice"][k],
+                   "settings": {"volume": 1, "loop": k in (0, 2, 4), "solo": k == 5, "fadeIn": 1 if k in (0, 3) else 0,
+                                "fadeOut": 2 if k in (0, 1) else 0, "trimIn": 0}})
 json.dump({"id": str(uuid.uuid4()).upper(), "name": "Demo", "colorHex": "#0091FF", "tracks": tracks, "sortIndex": 0},
           open(d + "/board.json", "w"))
 PY

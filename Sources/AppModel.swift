@@ -111,6 +111,43 @@ struct SyncConfig: Sendable {
         }
     }
 
+    /// New buttons that play parts of an existing track's audio file (no copy of the file): each gets its own
+    /// trim and loops by default. Returns the new track ids, inserted right after the source button.
+    @discardableResult
+    func addExcerpts(from id: Track.ID, _ items: [(name: String, subtitle: String?, start: Double, end: Double)]) async -> [Track.ID] {
+        guard let src = track(id), let bid = boardID(of: id), let bi = boards.firstIndex(where: { $0.id == bid }),
+              var at = boards[bi].tracks.firstIndex(where: { $0.id == id }) else { return [] }
+        var made: [Track] = []
+        for it in items {
+            var t = Track(id: UUID(), name: it.name, subtitle: it.subtitle, fileName: src.fileName, colorHex: src.colorHex)
+            t.settings = src.settings
+            t.settings.trimIn = it.start; t.settings.trimOut = it.end; t.settings.loop = true
+            at += 1
+            boards[bi].tracks.insert(t, at: at)
+            made.append(t)
+        }
+        await persist(bid)
+        for t in made { await register(t, in: bid) }
+        return made.map(\.id)
+    }
+
+    // MARK: audition (suggestions / editor): plays a range of a track's file without touching the track
+
+    @ObservationIgnored private let previewID = UUID()
+
+    func preview(_ id: Track.ID, start: Double, end: Double) async {
+        guard let src = track(id), let url = await audioURL(for: id) else { return }
+        engine.stop(previewID)
+        var p = Track(id: previewID, name: "Preview", fileName: src.fileName, colorHex: src.colorHex)
+        p.settings = src.settings
+        p.settings.trimIn = start; p.settings.trimOut = end
+        p.settings.loop = true; p.settings.solo = false; p.settings.fadeIn = 0; p.settings.fadeOut = 0
+        guard (try? engine.load(p, url: url)) != nil else { return }
+        engine.play(previewID)
+    }
+
+    func stopPreview() { engine.stop(previewID); engine.unload(previewID) }
+
     func track(_ id: Track.ID) -> Track? { boards.lazy.flatMap(\.tracks).first { $0.id == id } }
 
     /// In-memory replace; returns the board id. Synchronous so UI bindings never see stale values.

@@ -187,3 +187,35 @@ import UIKit
         #expect(m.boards[0].colorHex == "#ABCDEF")   // a stale in-memory board must never overwrite synced data
     }
 }
+
+@MainActor @Suite struct SharedFileTests {
+    @Test func buttonsFromOneFileShareIt() async throws {
+        let s = try LocalBoardStore(root: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
+        let m = AppModel(store: s, manualRendering: true, userDefaults: UserDefaults(suiteName: UUID().uuidString)!)
+        await m.addBoard(name: "Show")
+        await m.importTracks([try makeTone(seconds: 4)])
+        let src = m.boards[0].tracks[0]
+        let ids = await m.addExcerpts(from: src.id, [(name: "A", subtitle: "2 bars", start: 0.5, end: 1.5), (name: "B", subtitle: nil, start: 2, end: 3)])
+        let tracks = m.boards[0].tracks
+        #expect(tracks.count == 3 && ids.count == 2)
+        #expect(tracks.allSatisfy { $0.fileName == src.fileName })       // one audio file, three buttons
+        let a = try #require(m.track(ids[0]))
+        #expect(a.settings.trimIn == 0.5 && a.settings.trimOut == 1.5 && a.settings.loop)
+        #expect(a.subtitle == "2 bars")
+        #expect(m.unavailable.isEmpty)
+        #expect(m.engine.playRange(a.id) == 0.5...1.5)
+    }
+
+    @Test func previewPlaysARangeWithoutChangingTheTrack() async throws {
+        let s = try LocalBoardStore(root: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
+        let m = AppModel(store: s, manualRendering: true, userDefaults: UserDefaults(suiteName: UUID().uuidString)!)
+        await m.addBoard(name: "Show")
+        await m.importTracks([try makeTone(seconds: 4)])
+        let src = m.boards[0].tracks[0]
+        await m.preview(src.id, start: 1, end: 2)
+        #expect(m.playing.count == 1 && !m.playing.contains(src.id))
+        #expect(m.track(src.id) == src && m.boards[0].tracks.count == 1)
+        m.stopPreview()
+        #expect(m.playing.isEmpty)
+    }
+}
