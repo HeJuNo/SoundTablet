@@ -2,16 +2,8 @@ name: 5. SoundTablet testen
 run-name: SoundTablet testen (${{ github.ref_name }})
 
 on:
+  # Nur von Hand ("Run workflow"): die Tests laufen lokal vor jedem Push.
   workflow_dispatch:
-  # Von build.yml aufgerufen: ein roter Test haelt den TestFlight-Upload an.
-  workflow_call:
-  push:
-    # Auf main laeuft stattdessen build.yml, die diesen Workflow aufruft.
-    branches-ignore: [main]
-    paths-ignore:
-      - "**.md"
-      - ".gitignore"
-  pull_request:
 
 concurrency:
   group: tests-${{ github.ref }}

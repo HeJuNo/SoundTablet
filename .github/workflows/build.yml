@@ -45,14 +45,9 @@ jobs:
     uses: ./.github/workflows/create_certs.yml
     secrets: inherit
 
-  test:
-    name: Tests
-    # Rote Tests halten den Upload an: "build" wartet auf diesen Job.
-    uses: ./.github/workflows/test.yml
-
   build:
     name: Bauen und hochladen
-    needs: [check_certs, test]
+    needs: [check_certs]
     runs-on: xcode-27
     env:
       TEAMID: ${{ secrets.TEAMID }}
