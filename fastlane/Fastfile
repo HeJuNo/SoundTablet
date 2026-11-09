@@ -9,6 +9,7 @@
 # damit das Provisioning-Profil den Container enthaelt.
 
 require "base64"
+require "json"
 
 default_platform(:ios)
 
@@ -181,15 +182,25 @@ platform :ios do
     mapping = Actions.lane_context[SharedValues::MATCH_PROVISIONING_PROFILE_MAPPING]
     profile_name = mapping[BUNDLE_ID]
 
-    # Diagnose: welche iCloud-Container das Profil wirklich enthaelt (Archivierung scheitert sonst nur mit
-    # "doesn't support the iCloud identifier", ohne zu zeigen, was im Profil steht).
-    UI.message("Erwarteter Container: iCloud.#{BUNDLE_ID}")
-    Dir[File.expand_path("~/Library/MobileDevice/Provisioning Profiles/*.mobileprovision")].each do |f|
+    # Vorab pruefen, ob das Profil den iCloud-Container enthaelt. Sonst scheitert erst die Archivierung (Minuten
+    # spaeter) mit "doesn't support the iCloud identifier", ohne zu zeigen, was im Profil steht.
+    expected = "iCloud.#{BUNDLE_ID}"
+    # Xcode 16+ legt Profile unter UserData ab, aeltere Versionen unter MobileDevice.
+    dirs = ["~/Library/Developer/Xcode/UserData/Provisioning Profiles", "~/Library/MobileDevice/Provisioning Profiles"]
+    found = nil
+    dirs.flat_map { |d| Dir[File.expand_path("#{d}/*.mobileprovision")] }.each do |f|
       plist = `security cms -D -i "#{f}" 2>/dev/null`
       next unless plist.include?("<string>#{profile_name}</string>")
       File.write("/tmp/profile.plist", plist)
-      UI.message("Profil #{profile_name} (#{File.basename(f)}), Entitlements:\n" \
-                 "#{`plutil -extract Entitlements xml1 -o - /tmp/profile.plist`}")
+      found = JSON.parse(`plutil -convert json -o - /tmp/profile.plist`)["Entitlements"]
+      UI.message("Profil #{File.basename(f)}: #{found.slice('com.apple.developer.icloud-container-identifiers', 'com.apple.developer.icloud-services', 'com.apple.developer.ubiquity-container-identifiers').inspect}")
+    end
+    UI.user_error!("Profil #{profile_name} nicht gefunden (Pfade: #{dirs.join(', ')})") if found.nil?
+    containers = Array(found["com.apple.developer.icloud-container-identifiers"])
+    unless containers.include?(expected)
+      UI.user_error!("Das Profil enthaelt den Container #{expected} nicht (enthalten: #{containers.inspect}). " \
+                     "Im Developer-Portal die Container-ID pruefen (muss exakt so heissen) und der App-ID unter " \
+                     "Capabilities > iCloud > Configure zuweisen, dann Workflow 3 erneut starten.")
     end
 
     update_code_signing_settings(
