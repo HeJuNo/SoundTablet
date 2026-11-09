@@ -192,7 +192,7 @@ platform :ios do
       plist = `security cms -D -i "#{f}" 2>/dev/null`
       next unless plist.include?("<string>#{profile_name}</string>")
       File.write("/tmp/profile.plist", plist)
-      found = JSON.parse(`plutil -convert json -o - /tmp/profile.plist`)["Entitlements"]
+      found = JSON.parse(`plutil -extract Entitlements json -o - /tmp/profile.plist`)  # nur dieser Schluessel: das ganze Profil enthaelt <data>, das nicht nach JSON geht
       UI.message("Profil #{File.basename(f)}: #{found.slice('com.apple.developer.icloud-container-identifiers', 'com.apple.developer.icloud-services', 'com.apple.developer.ubiquity-container-identifiers').inspect}")
     end
     UI.user_error!("Profil #{profile_name} nicht gefunden (Pfade: #{dirs.join(', ')})") if found.nil?
