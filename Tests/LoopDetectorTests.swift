@@ -35,6 +35,15 @@ struct LoopDetectorTests {
         #expect(c.contains { $0.bars == 1 } && c.contains { $0.bars == 4 })
     }
 
+    @Test func loopBoundariesLandOnTheBeatNotJustNearIt() throws {
+        let c = LoopDetector.analyze(samples: clickTrack(bpm: 120, seconds: 17), sampleRate: sr)
+        for bars in [1, 2, 4, 8] {
+            let l = try #require(c.first { $0.bars == bars })
+            #expect(abs(l.end - Double(bars * 2)) < 0.004, "end of \(bars) bars: \(l.end)")  // 4 beats x 0.5 s per bar
+            #expect(l.score > 0.9, "seamless score of \(bars) bars: \(l.score)")
+        }
+    }
+
     @Test func splitsAtSilenceIntoSections() {
         let c = LoopDetector.analyze(samples: bursts(starts: [0.5, 2.5, 4.5], length: 1, total: 6), sampleRate: sr)
         let sections = c.filter { $0.bars == nil }.sorted { $0.start < $1.start }

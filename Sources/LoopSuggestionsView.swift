@@ -29,7 +29,7 @@ struct LoopSuggestionsView: View {
                 loading = false
             }
         }
-        .presentationDetents([.medium, .large])
+        .presentationDetents([.large])
         .onDisappear { model.stopPreview() }
     }
 
@@ -58,6 +58,8 @@ struct LoopSuggestionsView: View {
 
     private var actions: some View {
         VStack(spacing: 8) {
+            Text(selected.isEmpty ? "Select one or more loops. Tap the speaker to listen first." : "\(selected.count) selected")
+                .font(.footnote).foregroundStyle(.secondary)
             Button("Use for this button") { useOne() }
                 .buttonStyle(.bordered).disabled(selected.count != 1)
             Button(selected.count > 1 ? "Add \(selected.count) new buttons" : "Add as new button") { addNew() }

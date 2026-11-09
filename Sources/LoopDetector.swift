@@ -118,26 +118,71 @@ enum LoopDetector {
             if sum > phaseScore { phaseScore = sum; phase = p }
         }
         func snapOnset(_ h: Double) -> Double {  // nearest strong onset within 2 hops
-            let c = Int(h.rounded()); var best = c
+            let c = min(max(Int(h.rounded()), 0), n - 1); var best = c
             for i in max(0, c - 2)...min(n - 1, c + 2) where onset[i] > onset[best] { best = i }
             return Double(best)
         }
-        let startHop = snapOnset(Double(phase))
+        // The BPM grid is coarse (0.25) and onsets sit on an 11 ms grid, so a bar count x beat length drifts by tens of
+        // ms after a few seconds. Fit the real beat period (least squares through the onset nearest each predicted beat).
+        var t0 = snapOnset(Double(phase)), period = beat
+        var ks: [Double] = [0], ts: [Double] = [t0]
+        var k = 1
+        while Int((t0 + Double(k) * period).rounded()) + 2 < n {
+            ks.append(Double(k)); ts.append(snapOnset(t0 + Double(k) * period))
+            if ks.count >= 3 {
+                let mk = ks.reduce(0, +) / Double(ks.count), mt = ts.reduce(0, +) / Double(ts.count)
+                var num = 0.0, den = 0.0
+                for i in 0..<ks.count { num += (ks[i] - mk) * (ts[i] - mt); den += (ks[i] - mk) * (ks[i] - mk) }
+                if den > 0 { period = num / den; t0 = mt - period * mk }
+            }
+            k += 1
+        }
+        let startHop = max(0, t0)
         let w = Int(0.04 * sr)
         var out: [LoopCandidate] = []
         for bars in [1, 2, 4, 8] {
-            let endHop = snapOnset(startHop + Double(bars * 4) * beat)
-            var a = Int(startHop * Double(hop)), b = Int(endHop * Double(hop))
+            let endHop = startHop + Double(bars * 4) * period
+            var a = refineOnset(s, Int(startHop * Double(hop)), radius: hop * 3 / 2)
+            var b = refineOnset(s, Int(endHop * Double(hop)), radius: hop * 3 / 2)
             guard b + w <= s.count, b > a else { continue }
             a = ZeroCrossing.nearest(in: s, to: a, radius: Int(0.005 * sr))
-            b = ZeroCrossing.nearest(in: s, to: b, radius: Int(0.005 * sr))
+            b = bestSeam(s, a, near: b, radius: Int(0.005 * sr), w)
             let sim = similarity(s, a, b, w)
             let st = Double(a) / sr, en = Double(b) / sr
-            out.append(LoopCandidate(title: "\(bars) \(bars == 1 ? "bar" : "bars") · \(Int(bestBPM.rounded())) BPM",
+            out.append(LoopCandidate(title: "\(bars) \(bars == 1 ? "bar" : "bars") · \(Int((60 / (period * hopSec)).rounded())) BPM",
                                      detail: "\(clock(st))–\(clock(en)) · seamless \(Int(sim * 100)) %",
-                                     start: st, end: en, bpm: bestBPM, bars: bars, score: sim))
+                                     start: st, end: en, bpm: 60 / (period * hopSec), bars: bars, score: sim))
         }
         return out
+    }
+
+    /// The analysis grid is one hop (~11 ms) wide. If a clear attack lies within `radius` samples of `index` (quiet
+    /// before it, loud after), move to its first sample; otherwise (sustained sound) keep `index`.
+    private static func refineOnset(_ s: [Float], _ index: Int, radius: Int) -> Int {
+        let lo = max(0, index - radius), hi = min(s.count - 1, index + radius)
+        guard lo < hi else { return index }
+        var peak: Float = 0
+        for i in lo...hi { peak = max(peak, abs(s[i])) }
+        guard peak > 0 else { return index }
+        let quietEnd = lo + (hi - lo) / 3
+        var before: Float = 0
+        for i in lo..<quietEnd { before = max(before, abs(s[i])) }
+        guard before < 0.25 * peak else { return index }  // not an attack out of quiet
+        for i in lo...hi where abs(s[i]) >= 0.25 * peak { return i }
+        return index
+    }
+
+    /// Among the rising zero crossings around `b`, the one where the audio that follows resembles the start `a` most
+    /// (same phase and shape), so the jump back from the end to the start is as inaudible as possible.
+    private static func bestSeam(_ s: [Float], _ a: Int, near b: Int, radius: Int, _ w: Int) -> Int {
+        var best = b, bestScore = -1.0
+        let lo = max(1, b - radius), hi = min(s.count - w - 1, b + radius)
+        guard lo <= hi else { return b }
+        for i in lo...hi where s[i - 1] < 0 && s[i] >= 0 {
+            let sc = similarity(s, a, i, w)
+            if sc > bestScore { bestScore = sc; best = i }
+        }
+        return bestScore < 0 ? ZeroCrossing.nearest(in: s, to: b, radius: radius) : best
     }
 
     /// 0...1: how much the audio right after `b` (where a loop would jump back from) resembles the audio at `a`.

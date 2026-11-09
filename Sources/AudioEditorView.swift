@@ -45,41 +45,44 @@ struct AudioEditorView: View {
         HStack {
             Button(model.playing.contains(trackID) ? "Stop" : "Play",
                    systemImage: model.playing.contains(trackID) ? "stop.fill" : "play.fill") { model.tap(trackID) }
-                .buttonStyle(.borderedProminent).controlSize(.large)
+                .labelStyle(.titleAndIcon).buttonStyle(.borderedProminent).controlSize(.large)
             Spacer()
-            Toggle("Loop", isOn: Binding(get: { t.settings.loop }, set: { v in model.edit(trackID) { $0.settings.loop = v } }))
-                .toggleStyle(.button).controlSize(.large)
+            Toggle(isOn: Binding(get: { t.settings.loop }, set: { v in model.edit(trackID) { $0.settings.loop = v } })) {
+                Label("Loop", systemImage: "repeat")
+            }
+            .toggleStyle(.button).buttonStyle(.bordered).controlSize(.large)
         }
     }
 
     private func waveform(duration: Double, inT: Double, outT: Double) -> some View {
         GeometryReader { geo in
-            let w = geo.size.width * CGFloat(zoom), d = max(duration, 0.01)
+            let inset: CGFloat = 14  // room so the End handle is never clipped
+            let w = (geo.size.width - 2 * inset) * CGFloat(zoom), d = max(duration, 0.01)
             ScrollView(.horizontal, showsIndicators: zoom > 1) {
                 ZStack(alignment: .leading) {
                     Canvas { ctx, size in
-                        let n = max(peaks.count, 1), bw = size.width / CGFloat(n)
+                        let n = max(peaks.count, 1), bw = (size.width - 2 * inset) / CGFloat(n)
                         for (i, p) in peaks.enumerated() {
                             let h = max(1, CGFloat(p) * size.height)
-                            ctx.fill(Path(CGRect(x: CGFloat(i) * bw, y: (size.height - h) / 2, width: max(bw - 0.5, 0.5), height: h)),
+                            ctx.fill(Path(CGRect(x: inset + CGFloat(i) * bw, y: (size.height - h) / 2, width: max(bw - 0.5, 0.5), height: h)),
                                      with: .color(.accentColor))
                         }
                     }
-                    Rectangle().fill(.black.opacity(0.5)).frame(width: w * inT / d)
-                    Rectangle().fill(.black.opacity(0.5)).frame(width: w * (1 - outT / d)).offset(x: w * outT / d)
-                    playhead(width: w, duration: d)
-                    handle("Start", time: inT, x: w * inT / d, color: .green)
+                    Rectangle().fill(.black.opacity(0.5)).frame(width: inset + w * inT / d)
+                    Rectangle().fill(.black.opacity(0.5)).frame(width: w * (1 - outT / d) + inset).offset(x: inset + w * outT / d)
+                    playhead(width: w, inset: inset, duration: d)
+                    handle("Start", time: inT, x: inset + w * inT / d, color: .green)
                         .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .named("wave"))
-                            .onChanged { dragIn = min(max(0, $0.location.x / w * d), outT - 0.001) }
+                            .onChanged { dragIn = min(max(0, ($0.location.x - inset) / w * d), outT - 0.001) }
                             .onEnded { _ in if let v = dragIn { Task { await commit(inT: v) } }; dragIn = nil })
                         .accessibilityAdjustableAction { dir in nudge(in: dir == .increment ? step : -step) }
-                    handle("End", time: outT, x: w * outT / d, color: .red)
+                    handle("End", time: outT, x: inset + w * outT / d, color: .red)
                         .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .named("wave"))
-                            .onChanged { dragOut = max(min(duration, $0.location.x / w * d), inT + 0.001) }
+                            .onChanged { dragOut = max(min(duration, ($0.location.x - inset) / w * d), inT + 0.001) }
                             .onEnded { _ in if let v = dragOut { Task { await commit(outT: v) } }; dragOut = nil })
                         .accessibilityAdjustableAction { dir in nudge(out: dir == .increment ? step : -step) }
                 }
-                .frame(width: w, height: 110)
+                .frame(width: w + 2 * inset, height: 110)
                 .coordinateSpace(name: "wave")
             }
         }
@@ -100,10 +103,10 @@ struct AudioEditorView: View {
         .accessibilityLabel("\(name) point").accessibilityValue(LoopDetector.clock(time))
     }
 
-    private func playhead(width: CGFloat, duration: Double) -> some View {
+    private func playhead(width: CGFloat, inset: CGFloat, duration: Double) -> some View {
         TimelineView(.animation(minimumInterval: 1.0 / 30, paused: !model.playing.contains(trackID))) { _ in
             if let p = model.engine.position(trackID), model.playing.contains(trackID) {
-                Rectangle().fill(.white).frame(width: 2, height: 110).offset(x: width * p / duration - 1)
+                Rectangle().fill(.white).frame(width: 2, height: 110).offset(x: inset + width * p / duration - 1)
             }
         }
         .allowsHitTesting(false)

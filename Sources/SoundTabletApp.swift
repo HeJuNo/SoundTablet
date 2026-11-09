@@ -12,7 +12,14 @@ struct SoundTabletApp: App {
         WindowGroup {
             BoardView()
                 .environment(model)
-                .task { await model.load(); await model.syncNow() }
+                .task {
+                    await model.load(); await model.syncNow()
+                    if let d = DemoScreen.current {  // screenshot script only
+                        model.editingTrackID = model.activeBoard?.tracks.first { $0.name == "Loop Demo" }?.id
+                        model.showingDefaults = d == "defaults"
+                        if d == "defaults" { model.editingTrackID = nil }
+                    }
+                }
                 // "periodic" sync: whenever the app leaves or re-enters the foreground (iOS has no reliable timers)
                 .onChange(of: phase) { if phase == .background || phase == .active { Task { await model.syncNow() } } }
         }

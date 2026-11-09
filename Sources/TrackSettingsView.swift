@@ -5,12 +5,13 @@ struct TrackSettingsView: View {
     let trackID: Track.ID
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
-    @State private var suggesting = false
+    @State private var suggesting = DemoScreen.current == "suggestions"
     @State private var photo: PhotosPickerItem?
 
     var body: some View {
         NavigationStack {
             if let t = model.track(trackID) {
+                ScrollViewReader { proxy in
                 Form {
                     Section("Track") {
                         TextField("Name", text: bind(t, \.name))
@@ -32,6 +33,7 @@ struct TrackSettingsView: View {
                         AudioEditorView(trackID: trackID)
                         Button("Find loops & sections", systemImage: "wand.and.sparkles") { suggesting = true }
                     }
+                    .id("editor")
                     Section("Automations") { AutomationEditor(track: t) }
                     Section("Image") {
                         PhotosPicker("Choose image", selection: $photo, matching: .images)
@@ -46,6 +48,8 @@ struct TrackSettingsView: View {
                 .onChange(of: photo) {
                     guard let photo else { return }
                     Task { if let d = try? await photo.loadTransferable(type: Data.self) { await model.setImage(trackID, data: d) } }
+                }
+                .onAppear { if DemoScreen.current == "editor" { proxy.scrollTo("editor", anchor: .top) } }
                 }
             }
         }
