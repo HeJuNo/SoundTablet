@@ -196,12 +196,30 @@ platform :ios do
       UI.message("Profil #{File.basename(f)}: #{found.slice('com.apple.developer.icloud-container-identifiers', 'com.apple.developer.icloud-services', 'com.apple.developer.ubiquity-container-identifiers').inspect}")
     end
     UI.user_error!("Profil #{profile_name} nicht gefunden (Pfade: #{dirs.join(', ')})") if found.nil?
+    # Container-IDs sind im Profil exakt so geschrieben, wie sie im Portal angelegt wurden (z. B. "...SoundTablet"
+    # statt "...soundtablet"). Gleicher Name ohne Beachtung der Gross-/Kleinschreibung gilt als der richtige.
     containers = Array(found["com.apple.developer.icloud-container-identifiers"])
-    unless containers.include?(expected)
+    container = containers.find { |c| c.casecmp?(expected) }
+    if container.nil?
       UI.user_error!("Das Profil enthaelt den Container #{expected} nicht (enthalten: #{containers.inspect}). " \
-                     "Im Developer-Portal die Container-ID pruefen (muss exakt so heissen) und der App-ID unter " \
-                     "Capabilities > iCloud > Configure zuweisen, dann Workflow 3 erneut starten.")
+                     "Im Developer-Portal den Container der App-ID unter Capabilities > iCloud > Configure zuweisen, " \
+                     "dann Workflow 3 erneut starten.")
     end
+
+    # Entitlements und Info.plist verwenden den Container so, wie das Profil ihn schreibt. Das gilt nur fuer diesen
+    # CI-Lauf (beide Dateien werden vorher von XcodeGen frisch erzeugt). Ohne diesen Schritt wuerde
+    # "iCloud.$(PRODUCT_BUNDLE_IDENTIFIER)" bei abweichender Schreibweise nicht zum Profil passen, und der Schluessel
+    # in NSUbiquitousContainers wird von Xcode nicht aufgeloest (Ordner erschiene nicht in Dateien).
+    pb = "/usr/libexec/PlistBuddy"
+    ent = File.join(GITHUB_WORKSPACE, "SoundTablet.entitlements")
+    info = File.join(GITHUB_WORKSPACE, "Info.plist")
+    %w[com.apple.developer.icloud-container-identifiers com.apple.developer.ubiquity-container-identifiers].each do |k|
+      sh(pb, "-c", "Set :#{k}:0 #{container}", ent)
+    end
+    old_key = "iCloud.$(PRODUCT_BUNDLE_IDENTIFIER)"
+    sh(pb, "-c", "Copy :NSUbiquitousContainers:#{old_key} :NSUbiquitousContainers:#{container}", info)
+    sh(pb, "-c", "Delete :NSUbiquitousContainers:#{old_key}", info)
+    UI.success("iCloud-Container #{container} in Entitlements und Info.plist gesetzt.")
 
     update_code_signing_settings(
       path: PROJECT,
