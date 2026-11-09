@@ -50,7 +50,7 @@ struct DefaultsView: View {
             }
             .navigationTitle("Defaults")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar { Button("Done") { dismiss() } }
+            .toolbar { Button("Done", role: .confirm) { dismiss() } }
         }
     }
 }

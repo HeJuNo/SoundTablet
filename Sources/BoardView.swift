@@ -58,7 +58,7 @@ struct BoardView: View {
                     Button { model.activeBoardID = b.id } label: { Text(b.name).lineLimit(1).fixedSize() }
                         .buttonStyle(.borderedProminent)
                         .accessibilityAddTraits(b.id == model.activeBoardID ? .isSelected : [])
-                        .tint(b.id == model.activeBoardID ? Color(hex: b.colorHex) : .gray)
+                        .tint(b.id == model.activeBoardID ? Color(hex: b.colorHex).mix(with: .black, by: 0.3) : .gray)
                         .draggable(b.id.uuidString)
                         .dropDestination(for: String.self) { items, _ in
                             guard let s = items.first, let id = UUID(uuidString: s) else { return false }

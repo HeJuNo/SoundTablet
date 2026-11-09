@@ -16,6 +16,7 @@ struct TileView: View {
     @Environment(AppModel.self) private var model
     @State private var image: UIImage?
 
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var body: some View {
         let isPlaying = model.playing.contains(track.id)
         let missing = model.unavailable.contains(track.id)
@@ -31,8 +32,8 @@ struct TileView: View {
                     // Own dark surface in light and dark mode: white text must never sit on a pale tint.
                     RoundedRectangle(cornerRadius: 10).fill(Color(white: 0.12))
                     RoundedRectangle(cornerRadius: 10)
-                        .fill(color.opacity(isPlaying ? 0.3 + 0.45 * level : 0.28))
-                    if let image { Image(uiImage: image).resizable().scaledToFill().clipShape(RoundedRectangle(cornerRadius: 10)).opacity(0.35) }
+                        .fill(color.opacity(isPlaying ? 0.3 + 0.45 * (reduceMotion ? 0.5 : level) : 0.28))
+                    if let image { Image(uiImage: image).resizable().scaledToFill().clipShape(RoundedRectangle(cornerRadius: 10)).opacity(0.35).accessibilityIgnoresInvertColors() }
                     VStack(spacing: 0) {
                         HStack(spacing: 6) {  // only active settings, full strength on a dark chip: readable at a glance
                             ForEach(Self.icons(s, hasAutomations: !track.automations.isEmpty).filter(\.on), id: \.symbol) { icon in
@@ -60,7 +61,7 @@ struct TileView: View {
                             Spacer()
                             Text("-" + Self.clock(range.map { $0.upperBound - pos } ?? 0))
                         }
-                        .font(.caption.monospacedDigit()).lineLimit(1).minimumScaleFactor(0.7)
+                        .font(.caption.monospacedDigit()).fixedSize()
                         .accessibilityHidden(true)  // decoration: VoiceOver gets the state through the tile's value
                         .padding(.horizontal, 12).padding(.bottom, 12)
                     }
