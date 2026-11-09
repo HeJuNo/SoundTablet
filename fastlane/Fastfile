@@ -71,7 +71,9 @@ def configure_bundle_id(name, identifier, capabilities)
     UI.success("Alle benoetigten Capabilities sind gesetzt: #{capabilities.join(', ')}")
   else
     missing.each do |cap|
-      bundle_id.create_capability(cap)
+      # Apple rejects ICLOUD without a version ("cannot have CloudkitVersion 'null'"); XCODE_6 = iCloud Documents/CloudKit.
+      settings = cap == "ICLOUD" ? [{ key: "ICLOUD_VERSION", options: [{ key: "XCODE_6" }] }] : []
+      bundle_id.create_capability(cap, settings: settings)
       UI.success("Capability #{cap} ergaenzt.")
     end
     UI.important("Capabilities geaendert -- Lane :certs erneut laufen lassen, " \
