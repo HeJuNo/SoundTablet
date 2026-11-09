@@ -28,6 +28,18 @@ struct SyncConfig: Sendable {
     var defaults: TrackSettings = .default {
         didSet { userDefaults.set(try? JSONEncoder().encode(defaults), forKey: "defaultTrackSettings") }
     }
+    /// Smallest width of a button tile in points; the grid fits as many columns as the screen allows.
+    static let tileWidthRange: ClosedRange<Double> = 90...260
+    var tileMinWidth: Double = 150 {
+        didSet {
+            let c = min(max(tileMinWidth, Self.tileWidthRange.lowerBound), Self.tileWidthRange.upperBound)
+            if c != tileMinWidth { tileMinWidth = c; return }
+            userDefaults.set(tileMinWidth, forKey: "tileMinWidth")
+        }
+    }
+    var transportStyle: TransportStyle = .toolbar {
+        didSet { userDefaults.set(transportStyle.rawValue, forKey: "transportStyle") }
+    }
     /// Loudness (dBFS) of the reference file chosen in Defaults; persisted in UserDefaults.
     private(set) var referenceDB: Double?
     private(set) var referenceName: String?
@@ -51,6 +63,8 @@ struct SyncConfig: Sendable {
             defaults = v
         }
         engine = AudioEngine(onEvent: { [weak self] in self?.handle($0) }, manualRendering: manualRendering)
+        if userDefaults.object(forKey: "tileMinWidth") != nil { tileMinWidth = userDefaults.double(forKey: "tileMinWidth") }
+        if let t = userDefaults.string(forKey: "transportStyle").flatMap(TransportStyle.init(rawValue:)) { transportStyle = t }
         if let r = userDefaults.object(forKey: "referenceDB") as? Double {
             referenceDB = r; referenceName = userDefaults.string(forKey: "referenceName"); engine.referenceDB = r
         }

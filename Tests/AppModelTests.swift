@@ -219,3 +219,25 @@ import UIKit
         #expect(m.playing.isEmpty)
     }
 }
+
+@MainActor @Suite struct DisplaySettingsTests {
+    func make(_ ud: UserDefaults) throws -> AppModel {
+        AppModel(store: try LocalBoardStore(root: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)),
+                 manualRendering: true, userDefaults: ud)
+    }
+
+    @Test func buttonSizeAndTransportStylePersist() throws {
+        let ud = UserDefaults(suiteName: UUID().uuidString)!
+        let a = try make(ud)
+        #expect(a.tileMinWidth == 150 && a.transportStyle == .toolbar)   // defaults
+        a.tileMinWidth = 200; a.transportStyle = .floating
+        let b = try make(ud)
+        #expect(b.tileMinWidth == 200 && b.transportStyle == .floating)
+    }
+
+    @Test func buttonSizeStaysWithinUsableBounds() throws {
+        let a = try make(UserDefaults(suiteName: UUID().uuidString)!)
+        a.tileMinWidth = 10;  #expect(a.tileMinWidth == AppModel.tileWidthRange.lowerBound)
+        a.tileMinWidth = 999; #expect(a.tileMinWidth == AppModel.tileWidthRange.upperBound)
+    }
+}

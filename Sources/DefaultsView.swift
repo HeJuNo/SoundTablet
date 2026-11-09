@@ -26,6 +26,19 @@ struct DefaultsView: View {
                         Button("Remove reference", role: .destructive) { model.clearReference() }
                     }
                 } header: { Text("Loudness reference") }
+                Section("Display") {
+                    VStack(alignment: .leading) {
+                        HStack { Text("Button size"); Spacer(); Text("\(Int(m.tileMinWidth)) pt").foregroundStyle(.secondary).monospacedDigit() }
+                        Slider(value: $m.tileMinWidth, in: AppModel.tileWidthRange, step: 10) {
+                            Text("Button size")
+                        } minimumValueLabel: { Image(systemName: "square.grid.3x3").accessibilityHidden(true) }
+                          maximumValueLabel: { Image(systemName: "square.grid.2x2").accessibilityHidden(true) }
+                    }
+                    Text("The grid fits as many buttons per row as the screen allows at this size.").font(.footnote).foregroundStyle(.secondary)
+                    Picker("Pause / Stop / Fade out", selection: $m.transportStyle) {
+                        ForEach(TransportStyle.allCases) { Text($0.title).tag($0) }
+                    }
+                }
                 Section("iCloud Drive") {
                     Button("Sync now", systemImage: "arrow.triangle.2.circlepath") { Task { await model.syncNow() } }
                         .disabled(model.isSyncing)

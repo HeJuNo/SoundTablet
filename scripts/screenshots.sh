@@ -82,5 +82,24 @@ for SCREEN in editor suggestions settings defaults; do
     echo "$COMMIT-$SCREEN-$MODE.png"
   done
 done
+# Varianten der Pause/Stop/Fade-out-Leiste (normale und sehr grosse Schrift) und Kachelgroessen.
+shot() {  # name, launch args...
+  local name=$1; shift
+  xcrun simctl terminate "$UDID" "$BUNDLE_ID" >/dev/null 2>&1 || true
+  xcrun simctl launch "$UDID" "$BUNDLE_ID" "$@" >/dev/null
+  sleep 5
+  xcrun simctl io "$UDID" screenshot "$OUT/$COMMIT-$name.png" >/dev/null
+  echo "$COMMIT-$name.png"
+}
+for MODE in light dark; do
+  xcrun simctl ui "$UDID" appearance "$MODE" >/dev/null
+  for STYLE in toolbar floating prominent; do shot "transport-$STYLE-$MODE" -transportStyle "$STYLE"; done
+  shot "tiles-small-$MODE" -tileMinWidth 100
+  shot "tiles-large-$MODE" -tileMinWidth 220
+done
+xcrun simctl ui "$UDID" appearance light >/dev/null
+xcrun simctl ui "$UDID" content_size accessibility-extra-large >/dev/null
+for STYLE in toolbar floating prominent; do shot "transport-$STYLE-AXXL" -transportStyle "$STYLE"; done
+xcrun simctl ui "$UDID" content_size large >/dev/null
 xcrun simctl terminate "$UDID" "$BUNDLE_ID" >/dev/null 2>&1 || true
 echo "Fertig: $OUT"

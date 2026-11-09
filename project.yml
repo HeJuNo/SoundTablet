@@ -22,6 +22,7 @@ targets:
     scheme:
       testTargets:
         - SoundTabletTests
+        - SoundTabletUITests
     settings:
       base:
         # Placeholder for local builds; CI sets com.<TEAMID>.soundtablet or BUNDLE_ID.
@@ -66,3 +67,17 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.example.soundtablet.tests
         GENERATE_INFOPLIST_FILE: YES
         TARGETED_DEVICE_FAMILY: "1,2"
+  SoundTabletUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    deploymentTarget: "27.0"
+    sources:
+      - UITests
+    dependencies:
+      - target: SoundTablet
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.example.soundtablet.uitests
+        GENERATE_INFOPLIST_FILE: YES
+        TARGETED_DEVICE_FAMILY: "1,2"
+        TEST_TARGET_NAME: SoundTablet

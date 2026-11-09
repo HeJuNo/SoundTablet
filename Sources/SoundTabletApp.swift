@@ -13,7 +13,7 @@ struct SoundTabletApp: App {
             BoardView()
                 .environment(model)
                 .task {
-                    await model.load(); await model.syncNow()
+                    await model.load(); await DemoScreen.seedIfRequested(model); await model.syncNow()
                     if let d = DemoScreen.current {  // screenshot script only
                         model.editingTrackID = model.activeBoard?.tracks.first { $0.name == "Loop Demo" }?.id
                         model.showingDefaults = d == "defaults"

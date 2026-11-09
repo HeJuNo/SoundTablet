@@ -27,6 +27,7 @@ struct TileView: View {
             let pos = isPlaying ? (model.engine.position(track.id) ?? range?.lowerBound ?? 0) : (range?.lowerBound ?? 0)
             Button { model.tap(track.id) } label: {
                 ZStack {
+                    Color.clear.aspectRatio(1, contentMode: .fit)  // at least square; taller when larger text needs it
                     // Own dark surface in light and dark mode: white text must never sit on a pale tint.
                     RoundedRectangle(cornerRadius: 10).fill(Color(white: 0.12))
                     RoundedRectangle(cornerRadius: 10)
@@ -35,7 +36,7 @@ struct TileView: View {
                     VStack(spacing: 0) {
                         HStack(spacing: 6) {  // only active settings, full strength on a dark chip: readable at a glance
                             ForEach(Self.icons(s, hasAutomations: !track.automations.isEmpty).filter(\.on), id: \.symbol) { icon in
-                                Image(systemName: icon.symbol).font(.footnote.weight(.semibold))
+                                Image(systemName: icon.symbol).font(.system(size: 13, weight: .semibold))  // fixed: decorative chip, state is in the tile's value
                                     .frame(width: 26, height: 26)
                                     .background(.black.opacity(0.4), in: Circle())
                             }
@@ -59,12 +60,12 @@ struct TileView: View {
                             Spacer()
                             Text("-" + Self.clock(range.map { $0.upperBound - pos } ?? 0))
                         }
-                        .font(.caption.monospacedDigit())
+                        .font(.caption.monospacedDigit()).lineLimit(1).minimumScaleFactor(0.7)
+                        .accessibilityHidden(true)  // decoration: VoiceOver gets the state through the tile's value
                         .padding(.horizontal, 12).padding(.bottom, 12)
                     }
                     .foregroundStyle(.white)
                 }
-                .aspectRatio(1, contentMode: .fit)
                 .overlay(RoundedRectangle(cornerRadius: 10).stroke(color, lineWidth: isPlaying ? 5 : 0))
             }
             .buttonStyle(.plain)

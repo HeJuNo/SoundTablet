@@ -14,9 +14,7 @@ struct BoardView: View {
                 boardPicker
                 if let board = model.activeBoard {
                     ScrollView {
-                        Text(board.name).font(.title2.bold()).frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.horizontal).padding(.top, 8).accessibilityAddTraits(.isHeader)
-                        LazyVGrid(columns: [GridItem(.adaptive(minimum: 150), spacing: 12)], spacing: 12) {
+                        LazyVGrid(columns: [GridItem(.adaptive(minimum: model.tileMinWidth), spacing: 12)], spacing: 12) {
                             ForEach(board.tracks) { TileView(track: $0) }
                         }
                         .padding()
@@ -29,6 +27,7 @@ struct BoardView: View {
             }
             .navigationTitle("SoundTablet")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar { if model.transportStyle == .toolbar { TransportToolbar(model: model) } }
             .toolbar {
                 Button("Defaults", systemImage: "gearshape") { model.showingDefaults = true }
                 Button("Import", systemImage: "square.and.arrow.down") { importing = true }
