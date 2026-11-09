@@ -20,12 +20,12 @@ concurrency:
 jobs:
   test:
     name: Unit-Tests
-    runs-on: macos-26
+    runs-on: xcode-27
     steps:
       - name: Xcode auswaehlen
         uses: maxim-lobanov/setup-xcode@v1
         with:
-          xcode-version: latest-stable
+          xcode-version: "27.1"
 
       - uses: actions/checkout@v5
 
