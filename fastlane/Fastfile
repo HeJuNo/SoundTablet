@@ -99,9 +99,12 @@ platform :ios do
     ENV["MATCH_READONLY"] = false.to_s
     asc_api_key
 
+    # force: Match only re-checks that the profile is *valid*, not that it still matches the App ID's
+    # capabilities. Without it a profile made before the iCloud capability/container was added stays in use
+    # and the archive fails ("profile doesn't support the iCloud identifier"). Regenerates the profile only.
     match(
       type: "appstore",
-      force: false,
+      force: true,
       verbose: true,
       git_basic_authorization: match_auth,
       app_identifier: [BUNDLE_ID]
