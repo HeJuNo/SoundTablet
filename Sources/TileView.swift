@@ -57,11 +57,11 @@ struct TileView: View {
                         .padding(.horizontal, 8)
                         Spacer(minLength: 0)
                         HStack {  // elapsed left, remaining right
-                            Text(Self.clock(range.map { pos - $0.lowerBound } ?? 0))
+                            Text(Self.clock(range.map { pos - $0.lowerBound } ?? 0)).fixedSize()
                             Spacer()
-                            Text("-" + Self.clock(range.map { $0.upperBound - pos } ?? 0))
+                            Text("-" + Self.clock(range.map { $0.upperBound - pos } ?? 0)).fixedSize()
                         }
-                        .font(.caption.monospacedDigit()).fixedSize()
+                        .font(.caption.monospacedDigit())
                         .accessibilityHidden(true)  // decoration: VoiceOver gets the state through the tile's value
                         .padding(.horizontal, 12).padding(.bottom, 12)
                     }
