@@ -181,6 +181,17 @@ platform :ios do
     mapping = Actions.lane_context[SharedValues::MATCH_PROVISIONING_PROFILE_MAPPING]
     profile_name = mapping[BUNDLE_ID]
 
+    # Diagnose: welche iCloud-Container das Profil wirklich enthaelt (Archivierung scheitert sonst nur mit
+    # "doesn't support the iCloud identifier", ohne zu zeigen, was im Profil steht).
+    UI.message("Erwarteter Container: iCloud.#{BUNDLE_ID}")
+    Dir[File.expand_path("~/Library/MobileDevice/Provisioning Profiles/*.mobileprovision")].each do |f|
+      plist = `security cms -D -i "#{f}" 2>/dev/null`
+      next unless plist.include?("<string>#{profile_name}</string>")
+      File.write("/tmp/profile.plist", plist)
+      UI.message("Profil #{profile_name} (#{File.basename(f)}), Entitlements:\n" \
+                 "#{`plutil -extract Entitlements xml1 -o - /tmp/profile.plist`}")
+    end
+
     update_code_signing_settings(
       path: PROJECT,
       use_automatic_signing: false,
