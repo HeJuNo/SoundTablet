@@ -60,7 +60,7 @@ struct LocalBoardStore: BoardStore {
     }
 
     func deleteBoard(_ id: Board.ID) async throws {
-        if let dir = try folder(for: id) { try fm.removeItem(at: dir) }
+        if let dir = try folder(for: id) { try fm.removeItem(at: dir); SyncService.markDeleted(dir.lastPathComponent, in: root) }
     }
 
     func importAudio(from url: URL, into board: Board.ID, as track: Track.ID) async throws -> String {

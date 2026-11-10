@@ -67,6 +67,18 @@ import Testing
         #expect(try sync() == SyncReport())
     }
 
+    @Test func deletedBoardFolderIsRemovedFromCloudEvenIfItsFilesLookChanged() throws {
+        try write(local, "A/board.json", "v1", mtime: 1000); try write(local, "A/x.wav", "v1", mtime: 1000); _ = try sync()
+        try fm.removeItem(at: local.appendingPathComponent("A"))
+        SyncService.markDeleted("A", in: local)
+        try write(cloud, "A/board.json", "v1", mtime: 5000)                // iCloud touched the file
+        try write(cloud, "A/.x.wav.icloud", "placeholder", mtime: 1000)   // and evicted another one
+        try fm.removeItem(at: cloud.appendingPathComponent("A/x.wav"))
+        _ = try sync()
+        #expect(!fm.fileExists(atPath: cloud.appendingPathComponent("A").path) && !fm.fileExists(atPath: local.appendingPathComponent("A").path))
+        #expect(try sync() == SyncReport())
+    }
+
     @Test func editBeatsDeletionOnTheOtherSide() throws {
         try write(local, "a.txt", "v1", mtime: 1000); try write(local, "b.txt", "v1", mtime: 1000); _ = try sync()
         try fm.removeItem(at: local.appendingPathComponent("a.txt"))

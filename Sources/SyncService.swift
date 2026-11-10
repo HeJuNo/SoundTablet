@@ -27,11 +27,37 @@ final class SyncService: @unchecked Sendable {
 
     init(local: URL, cloud: URL) { self.local = local; self.cloud = cloud }
 
+    private static func tombstoneURL(_ local: URL) -> URL { local.appendingPathComponent(".sync-deleted.json") }
+
+    /// Remembers that the user deleted this top-level folder, so the next sync removes it from iCloud whatever the file dates say.
+    /// shortcut: read-modify-write without a lock; a delete racing the end of a sync could be forgotten, then the plain rules apply.
+    static func markDeleted(_ folder: String, in local: URL) {
+        let url = tombstoneURL(local)
+        var list = (try? JSONDecoder().decode([String].self, from: Data(contentsOf: url))) ?? []
+        if !list.contains(folder) { list.append(folder) }
+        try? JSONEncoder().encode(list).write(to: url, options: .atomic)
+    }
+
+    private func applyTombstones(_ state: inout [String: Double], _ report: inout SyncReport) {
+        let url = Self.tombstoneURL(local)
+        guard let list = try? JSONDecoder().decode([String].self, from: Data(contentsOf: url)) else { return }
+        var open: [String] = []
+        for folder in list {
+            let dir = cloud.appendingPathComponent(folder)
+            do {
+                if fm.fileExists(atPath: dir.path) { try fm.removeItem(at: dir); report.removed += 1 }
+                state = state.filter { !$0.key.hasPrefix(folder + "/") }
+            } catch { open.append(folder); report.errors.append(folder) }
+        }
+        if open.isEmpty { try? fm.removeItem(at: url) } else { try? JSONEncoder().encode(open).write(to: url, options: .atomic) }
+    }
+
     func sync() throws -> SyncReport {
         try fm.createDirectory(at: local, withIntermediateDirectories: true)
         try fm.createDirectory(at: cloud, withIntermediateDirectories: true)
         var state = (try? JSONDecoder().decode([String: Double].self, from: Data(contentsOf: stateURL))) ?? [:]
         var report = SyncReport()
+        applyTombstones(&state, &report)
         let (localFiles, _) = try files(in: local)
         let (cloudFiles, placeholders) = try files(in: cloud)
         for p in placeholders {  // not downloaded yet: ask iCloud, pick it up on a later sync
@@ -82,7 +108,7 @@ final class SyncService: @unchecked Sendable {
             guard v.isRegularFile == true else { continue }
             let rel = String(u.standardizedFileURL.path.dropFirst(base.count + 1))
             let name = u.lastPathComponent
-            if name == ".sync-state.json" || name == ".DS_Store" || name.hasPrefix(".tmp-") { continue }
+            if name == ".sync-state.json" || name == ".sync-deleted.json" || name == ".DS_Store" || name.hasPrefix(".tmp-") { continue }
             if name.hasPrefix("."), name.hasSuffix(".icloud") { placeholders.append(rel); continue }
             out[rel] = v.contentModificationDate?.timeIntervalSince1970 ?? 0
         }
