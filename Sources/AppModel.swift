@@ -131,6 +131,33 @@ struct SyncConfig: Sendable {
         for b in boards { await persist(b.id) }
     }
 
+    /// Imports every board of a Soundboard Studio folder as new boards behind the existing ones; returns a one-line summary.
+    /// Running it twice imports everything twice.
+    func importSoundboardStudio(_ folder: URL) async -> String {
+        let scoped = folder.startAccessingSecurityScopedResource()
+        defer { if scoped { folder.stopAccessingSecurityScopedResource() } }
+        let r: SoundboardStudioImport.Result
+        do { r = try SoundboardStudioImport.read(folder) } catch { return "Not a Soundboard Studio folder: \(error.localizedDescription)" }
+        var buttons = 0, failed = 0
+        let offset = boards.count
+        for var b in r.boards {
+            let tracks = b.tracks
+            b.tracks = []; b.sortIndex += offset
+            boards.append(b)
+            await persist(b.id)
+            for var t in tracks {
+                do { t.fileName = try await store.importAudio(from: r.sources[t.id]!, into: b.id, as: t.id) } catch { failed += 1; continue }
+                guard let i = boards.firstIndex(where: { $0.id == b.id }) else { break }
+                boards[i].tracks.append(t); buttons += 1
+                await register(t, in: b.id)
+            }
+            await persist(b.id)
+        }
+        activeBoardID = boards.count > offset ? boards[offset].id : activeBoardID
+        return "Imported \(r.boards.count) boards, \(buttons) buttons"
+            + (r.skipped.isEmpty && failed == 0 ? "" : "; \(r.skipped.count + failed) skipped (audio file missing or unreadable)")
+    }
+
     func importTracks(_ urls: [URL]) async {
         guard let bid = activeBoardID else { return }
         for url in urls {

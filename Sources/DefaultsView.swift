@@ -5,6 +5,8 @@ struct DefaultsView: View {
     @Environment(AppModel.self) private var model
     @Environment(\.dismiss) private var dismiss
     @State private var choosing = false
+    @State private var choosingStudio = false
+    @State private var studioResult: String?
 
     var body: some View {
         @Bindable var m = model
@@ -39,6 +41,10 @@ struct DefaultsView: View {
                         ForEach(TransportStyle.allCases) { Text($0.title).tag($0) }
                     }
                 }
+                Section("Import") {
+                    Button("Import Soundboard Studio folder…", systemImage: "square.and.arrow.down") { choosingStudio = true }
+                    if let studioResult { Text(studioResult).font(.footnote).foregroundStyle(.secondary) }
+                }
                 Section("iCloud Drive") {
                     Button("Sync now", systemImage: "arrow.triangle.2.circlepath") { Task { await model.syncNow() } }
                         .disabled(model.isSyncing)
@@ -47,6 +53,9 @@ struct DefaultsView: View {
             }
             .fileImporter(isPresented: $choosing, allowedContentTypes: [.audio]) { result in
                 if case .success(let url) = result { Task { await model.setReference(url) } }
+            }
+            .fileImporter(isPresented: $choosingStudio, allowedContentTypes: [.folder]) { result in
+                if case .success(let url) = result { studioResult = "Importing…"; Task { studioResult = await model.importSoundboardStudio(url) } }
             }
             .navigationTitle("Defaults")
             .navigationBarTitleDisplayMode(.inline)

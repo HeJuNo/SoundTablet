@@ -13,7 +13,14 @@ struct SoundTabletApp: App {
             BoardView()
                 .environment(model)
                 .task {
-                    await model.load(); await DemoScreen.seedIfRequested(model); await model.syncNow()
+                    await model.load(); await DemoScreen.seedIfRequested(model)
+                    #if DEBUG  // `-importStudio <folder>`: runs the Soundboard Studio import without the file picker
+                    if let p = UserDefaults.standard.string(forKey: "importStudio") { print("IMPORT:", await model.importSoundboardStudio(URL(fileURLWithPath: p))) }
+                    #endif
+                    #if DEBUG  // `-demoBoard Julia`: opens that board
+                    if let n = UserDefaults.standard.string(forKey: "demoBoard"), let b = model.boards.first(where: { $0.name == n }) { model.activeBoardID = b.id }
+                    #endif
+                    await model.syncNow()
                     if let d = DemoScreen.current {  // screenshot script only
                         model.editingTrackID = model.activeBoard?.tracks.first { $0.name == "Loop Demo" }?.id
                         model.showingDefaults = d == "defaults"
