@@ -17,8 +17,15 @@ struct SoundTabletApp: App {
                     if let d = DemoScreen.current {  // screenshot script only
                         model.editingTrackID = model.activeBoard?.tracks.first { $0.name == "Loop Demo" }?.id
                         model.showingDefaults = d == "defaults"
-                        if d == "defaults" { model.editingTrackID = nil }
+                        if d == "defaults" || d == "boardedit" { model.editingTrackID = nil }
+                        if d == "boardedit" { model.editingBoardID = model.activeBoardID }
                     }
+                    #if DEBUG  // screenshot script only: `-demoPlay "Loop Demo,Applause"` starts those tracks
+                    try? await Task.sleep(for: .seconds(1))  // let the engine finish loading
+                    for name in (UserDefaults.standard.string(forKey: "demoPlay") ?? "").split(separator: ",") {
+                        if let t = model.activeBoard?.tracks.first(where: { $0.name == name }) { model.tap(t.id) }
+                    }
+                    #endif
                 }
                 // "periodic" sync: whenever the app leaves or re-enters the foreground (iOS has no reliable timers)
                 .onChange(of: phase) { if phase == .background || phase == .active { Task { await model.syncNow() } } }

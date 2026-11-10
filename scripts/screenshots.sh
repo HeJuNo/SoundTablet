@@ -72,12 +72,12 @@ for MODE in light dark; do
   echo "$COMMIT-board-$MODE.png"
 done
 # Weitere Zustaende (nur Debug-Build): Track-Editor, Loop-Vorschlaege, Track-Einstellungen, Defaults.
-for SCREEN in editor suggestions settings defaults; do
+for SCREEN in editor suggestions settings defaults boardedit; do
   for MODE in light dark; do
     xcrun simctl ui "$UDID" appearance "$MODE" >/dev/null
     xcrun simctl terminate "$UDID" "$BUNDLE_ID" >/dev/null 2>&1 || true
     xcrun simctl launch "$UDID" "$BUNDLE_ID" -demoScreen "$SCREEN" >/dev/null
-    sleep 6
+    sleep 8
     xcrun simctl io "$UDID" screenshot "$OUT/$COMMIT-$SCREEN-$MODE.png" >/dev/null
     echo "$COMMIT-$SCREEN-$MODE.png"
   done
@@ -101,5 +101,10 @@ xcrun simctl ui "$UDID" appearance light >/dev/null
 xcrun simctl ui "$UDID" content_size accessibility-extra-large >/dev/null
 for STYLE in toolbar floating prominent; do shot "transport-$STYLE-AXXL" -transportStyle "$STYLE"; done
 xcrun simctl ui "$UDID" content_size large >/dev/null
+# Demo tracks last 2 s, so capture shortly after the app starts them.
+xcrun simctl terminate "$UDID" "$BUNDLE_ID" >/dev/null 2>&1 || true
+xcrun simctl launch "$UDID" "$BUNDLE_ID" -seedDemo YES -transportStyle toolbar -demoPlay "220 Hz,440 Hz,660 Hz" >/dev/null
+sleep 4
+xcrun simctl io "$UDID" screenshot "$OUT/$COMMIT-tile-playing-progress.png" >/dev/null
 xcrun simctl terminate "$UDID" "$BUNDLE_ID" >/dev/null 2>&1 || true
 echo "Fertig: $OUT"

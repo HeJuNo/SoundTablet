@@ -56,6 +56,12 @@ struct TileView: View {
                         }
                         .padding(.horizontal, 8)
                         Spacer(minLength: 0)
+                        // Playback position inside the button; the space stays reserved so tiles do not jump on start/stop.
+                        let len = range.map { $0.upperBound - $0.lowerBound } ?? 0
+                        ProgressBar(fraction: len > 0 ? (pos - (range?.lowerBound ?? 0)) / len : 0)
+                            .frame(height: 5).opacity(isPlaying ? 1 : 0)
+                            .padding(.horizontal, 12).padding(.bottom, 6)
+                            .accessibilityHidden(true)
                         HStack {  // elapsed left, remaining right
                             Text(Self.clock(range.map { pos - $0.lowerBound } ?? 0)).fixedSize()
                             Spacer()
@@ -89,6 +95,19 @@ struct TileView: View {
             guard let s = items.first, let id = UUID(uuidString: s) else { return false }
             Task { await model.moveTrack(id, before: track.id) }
             return true
+        }
+    }
+}
+
+/// Thin track with a filled part; decorative, the tile's accessibility value already says "Playing".
+private struct ProgressBar: View {
+    let fraction: Double
+    var body: some View {
+        GeometryReader { g in
+            ZStack(alignment: .leading) {
+                Capsule().fill(.black.opacity(0.45))
+                Capsule().fill(.white).frame(width: g.size.width * min(max(fraction, 0), 1))
+            }
         }
     }
 }

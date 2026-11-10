@@ -241,3 +241,40 @@ import UIKit
         a.tileMinWidth = 999; #expect(a.tileMinWidth == AppModel.tileWidthRange.upperBound)
     }
 }
+
+@MainActor @Suite struct BoardEditingTests {
+    private func model() throws -> AppModel {
+        let s = try LocalBoardStore(root: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
+        return AppModel(store: s, manualRendering: true, userDefaults: UserDefaults(suiteName: UUID().uuidString)!)
+    }
+
+    @Test func emptyBoardNameGetsDefaultTitle() async throws {
+        let m = try model()
+        await m.addBoard(name: "   ")
+        await m.addBoard(name: "")
+        #expect(m.boards.map(\.name) == ["Board 1", "Board 2"])
+    }
+
+    @Test func updateRenamesRecolorsAndPersists() async throws {
+        let m = try model()
+        await m.addBoard(name: "Show")
+        let id = m.boards[0].id
+        await m.updateBoard(id, name: "  Act 1 ", colorHex: "#30A46C")
+        #expect(m.boards[0].name == "Act 1" && m.boards[0].colorHex == "#30A46C")
+        await m.updateBoard(id, name: "  ", colorHex: "#E5484D")  // blank name keeps the old one
+        #expect(m.boards[0].name == "Act 1" && m.boards[0].colorHex == "#E5484D")
+        await m.load()
+        #expect(m.boards.first?.name == "Act 1")
+    }
+
+    @Test func deleteRemovesBoardAndMovesSelection() async throws {
+        let m = try model()
+        await m.addBoard(name: "A"); await m.addBoard(name: "B")
+        let a = m.boards[0].id, b = m.boards[1].id
+        #expect(m.activeBoardID == b)
+        await m.deleteBoard(b)
+        #expect(m.boards.map(\.id) == [a] && m.activeBoardID == a)
+        await m.load()
+        #expect(m.boards.map(\.name) == ["A"])
+    }
+}

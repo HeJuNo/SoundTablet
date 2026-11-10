@@ -50,7 +50,7 @@ struct DefaultsView: View {
             }
             .navigationTitle("Defaults")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar { Button("Done", role: .confirm) { dismiss() } }
+            .toolbar { Button("Done") { dismiss() }.fontWeight(.semibold).foregroundStyle(.primary) }  // the prominent blue pill is only ~3.6:1
         }
     }
 }

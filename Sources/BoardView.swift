@@ -22,7 +22,6 @@ struct BoardView: View {
                 } else {
                     ContentUnavailableView("No board", systemImage: "square.grid.2x2", description: Text("Create a board with +."))
                 }
-                NowPlayingStrip()
                 GlobalBar()
             }
             .navigationTitle("SoundTablet")
@@ -40,6 +39,9 @@ struct BoardView: View {
                 if let id = model.editingTrackID { TrackSettingsView(trackID: id) }
             }
             .sheet(isPresented: $m.showingDefaults) { DefaultsView() }
+            .sheet(isPresented: Binding(get: { model.editingBoardID != nil }, set: { if !$0 { model.editingBoardID = nil } })) {
+                if let id = model.editingBoardID { BoardEditView(boardID: id) }
+            }
             .alert("New board", isPresented: $addingBoard) {
                 TextField("Name", text: $newBoardName)
                 Button("Create") { Task { await model.addBoard(name: newBoardName) }; newBoardName = "" }
@@ -58,7 +60,8 @@ struct BoardView: View {
                     Button { model.activeBoardID = b.id } label: { Text(b.name).lineLimit(1).fixedSize() }
                         .buttonStyle(.borderedProminent)
                         .accessibilityAddTraits(b.id == model.activeBoardID ? .isSelected : [])
-                        .tint(b.id == model.activeBoardID ? Color(hex: b.colorHex).mix(with: .black, by: 0.3) : .gray)
+                        .tint(b.id == model.activeBoardID ? Color(hex: b.colorHex).mix(with: .black, by: 0.3) : .gray.mix(with: .black, by: 0.45))  // white title stays readable on both
+                        .contextMenu { Button("Edit board…", systemImage: "pencil") { model.editingBoardID = b.id } }
                         .draggable(b.id.uuidString)
                         .dropDestination(for: String.self) { items, _ in
                             guard let s = items.first, let id = UUID(uuidString: s) else { return false }

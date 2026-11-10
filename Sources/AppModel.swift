@@ -45,6 +45,7 @@ struct SyncConfig: Sendable {
     private(set) var referenceName: String?
     var lastError: String?
     var editingTrackID: Track.ID?
+    var editingBoardID: Board.ID?
     private(set) var syncStatus = "Not synced yet"
     private(set) var isSyncing = false
     var showingDefaults = false
@@ -100,10 +101,30 @@ struct SyncConfig: Sendable {
     // MARK: editing
 
     func addBoard(name: String) async {
-        let b = Board(id: UUID(), name: name, colorHex: tilePalette[boards.count % tilePalette.count], sortIndex: boards.count)
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let b = Board(id: UUID(), name: trimmed.isEmpty ? "Board \(boards.count + 1)" : trimmed, colorHex: tilePalette[boards.count % tilePalette.count], sortIndex: boards.count)
         boards.append(b)
         activeBoardID = b.id
         await persist(b.id)
+    }
+
+    /// Renames / recolours a board. A blank name keeps the old one, so a title can never disappear.
+    func updateBoard(_ id: Board.ID, name: String, colorHex: String) async {
+        guard let i = boards.firstIndex(where: { $0.id == id }) else { return }
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty { boards[i].name = trimmed }
+        boards[i].colorHex = colorHex
+        await persist(id)
+    }
+
+    func deleteBoard(_ id: Board.ID) async {
+        guard let i = boards.firstIndex(where: { $0.id == id }) else { return }
+        for t in boards[i].tracks { engine.stop(t.id) }
+        do { try await store.deleteBoard(id) } catch { lastError = error.localizedDescription; return }
+        boards.remove(at: i)
+        for j in boards.indices { boards[j].sortIndex = j }
+        if activeBoardID == id { activeBoardID = boards.first?.id }
+        for b in boards { await persist(b.id) }
     }
 
     func importTracks(_ urls: [URL]) async {
