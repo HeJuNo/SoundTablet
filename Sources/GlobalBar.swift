@@ -54,7 +54,7 @@ struct FloatingTransport: View {
         Button(model.isPaused ? "Resume" : "Pause", systemImage: model.isPaused ? "play.fill" : "pause.fill") { model.togglePause() }
             .buttonStyle(.glass)
         Button("Stop", systemImage: "stop.fill") { model.stopAll() }
-            .buttonStyle(.glassProminent).tint(.red)
+            .buttonStyle(.glassProminent).tint(Color.red.mix(with: .black, by: 0.3))  // white title: system red is only 3.6:1
         Button("Fade out", systemImage: "speaker.slash.fill") { model.stopAll(fadeOut: 2) }
             .buttonStyle(.glass)
     }

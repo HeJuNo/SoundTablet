@@ -38,8 +38,8 @@ import XCTest
         // audit flags every system button of that kind. Large-text legibility is checked on the AX-size screenshots instead.
         try app.performAccessibilityAudit(for: XCUIAccessibilityAuditType.all.subtracting(.dynamicType)) { issue in
             if let l = issue.element?.label, labels.contains(where: { l.hasPrefix($0) }) {
-                // The system toolbar's glass fools the audit's contrast sampling; use the measured contrast instead.
-                if style == "toolbar", issue.compactDescription.hasPrefix("Contrast"), let c = Contrast.measure(app, frame: issue.element!.frame) {
+                // Glass (system toolbar, floating buttons) fools the audit's contrast sampling; use the measured contrast instead.
+                if style != "prominent", issue.compactDescription.hasPrefix("Contrast"), let c = Contrast.measure(app, frame: issue.element!.frame) {
                     if c < 4.5 { issues.append("measured contrast \(c) | \(l)") }
                     return true
                 }
@@ -64,7 +64,7 @@ import XCTest
     func testToolbarLargeText() throws { try expectPass("toolbar", true) }
 
     func testFloating() throws {
-        try expectKnownFailure("floating", false, "glass buttons over scrolling tiles: the audit measures contrast against whatever is behind them")
+        try expectPass("floating", false)
     }
     func testProminent() throws { try expectPass("prominent", false) }
     func testProminentLargeText() throws { try expectPass("prominent", true) }

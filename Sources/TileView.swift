@@ -19,13 +19,14 @@ struct TileView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var body: some View {
         let isPlaying = model.playing.contains(track.id)
+        let isPaused = model.paused.contains(track.id)
         let missing = model.unavailable.contains(track.id)
         TimelineView(.animation(minimumInterval: 1.0 / 30, paused: !isPlaying)) { _ in
             let level = Double(model.engine.level(track.id))  // tile pulses with the live level
             let color = Color(hex: track.colorHex)
             let s = track.settings
             let range = model.engine.playRange(track.id)
-            let pos = isPlaying ? (model.engine.position(track.id) ?? range?.lowerBound ?? 0) : (range?.lowerBound ?? 0)
+            let pos = isPlaying || isPaused ? (model.engine.position(track.id) ?? range?.lowerBound ?? 0) : (range?.lowerBound ?? 0)
             Button { model.tap(track.id) } label: {
                 ZStack {
                     Color.clear.aspectRatio(1, contentMode: .fit)  // at least square; taller when larger text needs it
@@ -59,7 +60,7 @@ struct TileView: View {
                         // Playback position inside the button; the space stays reserved so tiles do not jump on start/stop.
                         let len = range.map { $0.upperBound - $0.lowerBound } ?? 0
                         ProgressBar(fraction: len > 0 ? (pos - (range?.lowerBound ?? 0)) / len : 0)
-                            .frame(height: 5).opacity(isPlaying ? 1 : 0)
+                            .frame(height: 5).opacity(isPlaying || isPaused ? 1 : 0)
                             .padding(.horizontal, 12).padding(.bottom, 6)
                             .accessibilityHidden(true)
                         HStack {  // elapsed left, remaining right
@@ -84,10 +85,17 @@ struct TileView: View {
         .opacity(missing ? 0.35 : 1)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(track.name)
-        .accessibilityValue(([missing ? "Audio file missing" : isPlaying ? "Playing" : "Stopped"]
+        .accessibilityValue(([missing ? "Audio file missing" : isPlaying ? "Playing" : isPaused ? "Paused" : "Stopped"]
             + Self.icons(track.settings, hasAutomations: !track.automations.isEmpty).filter(\.on).map(\.name)).joined(separator: ", "))
         .contextMenu {
             Button("Settings", systemImage: "slider.horizontal.3") { model.editingTrackID = track.id }
+            if model.boards.count > 1 {
+                Menu("Move to board", systemImage: "rectangle.portrait.and.arrow.right") {
+                    ForEach(model.boards.filter { $0.id != model.boardID(of: track.id) }) { b in
+                        Button(b.name) { Task { await model.moveTrack(track.id, toBoard: b.id) } }
+                    }
+                }
+            }
             Button("Delete", systemImage: "trash", role: .destructive) { Task { await model.deleteTrack(track.id) } }
         }
         .draggable(track.id.uuidString)

@@ -24,6 +24,10 @@ struct SyncConfig: Sendable {
     private(set) var playing: Set<Track.ID> = []
     private(set) var unavailable: Set<Track.ID> = []
     var isPaused = false
+    /// Buttons paused by a tap (voice kept, resumes on the next tap).
+    private(set) var paused: Set<Track.ID> = []
+    @ObservationIgnored var doubleTapWindow: Duration = .milliseconds(400)
+    @ObservationIgnored private var lastResume: (id: Track.ID, at: ContinuousClock.Instant)?
     /// Settings applied to every newly imported track; persisted in UserDefaults.
     var defaults: TrackSettings = .default {
         didSet { userDefaults.set(try? JSONEncoder().encode(defaults), forKey: "defaultTrackSettings") }
@@ -94,7 +98,7 @@ struct SyncConfig: Sendable {
         do { try await store.save(b) } catch { lastError = error.localizedDescription }
     }
 
-    private func boardID(of track: Track.ID) -> Board.ID? {
+    func boardID(of track: Track.ID) -> Board.ID? {
         boards.first { $0.tracks.contains { $0.id == track } }?.id
     }
 
@@ -312,6 +316,29 @@ struct SyncConfig: Sendable {
         await persist(bid)
     }
 
+    /// Moves a button to another board: files are copied first and the originals removed only after both boards are saved.
+    func moveTrack(_ id: Track.ID, toBoard target: Board.ID) async {
+        guard let src = boardID(of: id), src != target, boards.contains(where: { $0.id == target }), var t = track(id) else { return }
+        engine.stop(id)
+        var old: [String] = []
+        do {
+            if let url = try await store.audioURL(board: src, fileName: t.fileName) {
+                old.append(t.fileName)
+                t.fileName = try await store.importAudio(from: url, into: target, as: id)
+            }
+            if let img = t.imageFileName, let url = try await store.audioURL(board: src, fileName: img) {
+                old.append(img)
+                t.imageFileName = try await store.importAudio(from: url, into: target, as: UUID())
+            }
+        } catch { lastError = error.localizedDescription; return }
+        boards[boards.firstIndex { $0.id == src }!].tracks.removeAll { $0.id == id }
+        boards[boards.firstIndex { $0.id == target }!].tracks.append(t)
+        await persist(target)   // target first: a crash in between leaves a duplicate, never a loss
+        await persist(src)
+        for f in old { try? await store.deleteFile(board: src, fileName: f) }
+        await register(t, in: target)
+    }
+
     func moveBoard(_ id: Board.ID, before target: Board.ID) async {
         guard id != target, let from = boards.firstIndex(where: { $0.id == id }) else { return }
         let b = boards.remove(at: from)
@@ -336,20 +363,36 @@ struct SyncConfig: Sendable {
         case .failure(let e): syncStatus = "Sync failed: \(e.localizedDescription)"
         case .success(let r):
             syncStatus = "Synced \(Date.now.formatted(date: .omitted, time: .shortened)): \(r.copiedToCloud) up, \(r.copiedToLocal) down"
+                + (r.removed == 0 ? "" : ", \(r.removed) removed")
                 + (r.conflicts.isEmpty ? "" : ", \(r.conflicts.count) conflict(s) kept as copies")
                 + (r.errors.isEmpty ? "" : ", \(r.errors.count) file(s) failed")
                 + (r.pendingDownloads > 0 ? ", \(r.pendingDownloads) still downloading" : "")
             // Always reload after files came down: a stale in-memory board must never be persisted over them.
             // load() only replaces boards/engine registrations; running voices and `playing` are keyed by id.
-            if r.copiedToLocal > 0 { await load() }
+            if r.copiedToLocal > 0 || r.removed > 0 { await load() }
         }
     }
 
     // MARK: playback
 
+    /// Tap on a playing button pauses it; the next tap continues there, a quick second tap restarts from the beginning.
+    /// Pressing any other button drops all paused buttons.
     func tap(_ id: Track.ID) {
         guard !unavailable.contains(id) else { return }
-        if playing.contains(id) { engine.stop(id) } else { engine.play(id) }
+        for other in paused where other != id { engine.release(other) }
+        paused = paused.filter { $0 == id }
+        let now = ContinuousClock.now
+        if playing.contains(id) {
+            if let r = lastResume, r.id == id, now - r.at < doubleTapWindow { lastResume = nil; engine.play(id); return }
+            engine.pause(id)
+            paused.insert(id)
+        } else if paused.contains(id) {
+            paused.remove(id)
+            engine.resume(id)
+            lastResume = (id, now)
+        } else {
+            engine.play(id)
+        }
     }
 
     func togglePause() {
@@ -364,8 +407,9 @@ struct SyncConfig: Sendable {
 
     private func handle(_ e: PlaybackEvent) {
         switch e {
-        case .started(let i): playing.insert(i)
-        case .stopped(let i), .ended(let i): playing.remove(i)
+        case .started(let i): playing.insert(i); paused.remove(i)
+        case .stopped(let i): playing.remove(i); paused = paused.filter(engine.isPlaying)  // keeps buttons paused by a tap
+        case .ended(let i): playing.remove(i); paused.remove(i)
         }
         if let bid = boardID(of: e.trackID), let b = boards.first(where: { $0.id == bid }) {
             automation.handle(e, board: b, control: engine)

@@ -32,6 +32,78 @@ import UIKit
         #expect(!m.playing.contains(a.id))
     }
 
+    func twoTracks(_ m: AppModel) async throws -> (Track, Track) {
+        await m.addBoard(name: "Show"); await m.importTracks([try makeTone(seconds: 4), try makeTone(seconds: 4)])
+        m.doubleTapWindow = .zero
+        return (m.boards[0].tracks[0], m.boards[0].tracks[1])
+    }
+
+    @Test func tapPausesAndNextTapResumes() async throws {
+        let (m, _) = try makeModel()
+        let (a, _) = try await twoTracks(m)
+        m.tap(a.id)
+        m.tap(a.id)
+        #expect(!m.playing.contains(a.id) && m.paused == [a.id])
+        #expect(m.engine.isPlaying(a.id))
+        m.tap(a.id)
+        #expect(m.playing.contains(a.id) && m.paused.isEmpty)
+    }
+
+    @Test func doubleTapOnPausedRestartsFromStart() async throws {
+        let (m, _) = try makeModel()
+        let (a, _) = try await twoTracks(m)
+        m.doubleTapWindow = .seconds(5)
+        m.tap(a.id); try m.engine.renderOffline(seconds: 1); m.tap(a.id)   // playing, then paused at ~1 s
+        m.tap(a.id); m.tap(a.id)                                           // resume, quick second tap = restart
+        #expect(m.playing.contains(a.id) && m.paused.isEmpty)
+        try m.engine.renderOffline(seconds: 0.1)
+        let p = try #require(m.engine.position(a.id))
+        #expect(p < 0.3)   // resumed at ~1 s would read > 1
+    }
+
+    @Test func tappingAnotherButtonResetsPausedTrack() async throws {
+        let (m, _) = try makeModel()
+        let (a, b) = try await twoTracks(m)
+        m.tap(a.id); m.tap(a.id)
+        m.tap(b.id)
+        #expect(m.paused.isEmpty && !m.engine.isPlaying(a.id))
+        #expect(m.playing == [b.id])
+        m.tap(a.id)                                // starts from the beginning, not resumed
+        #expect(m.playing == [a.id, b.id])
+    }
+
+    @Test func stopAllClearsPausedTracks() async throws {
+        let (m, _) = try makeModel()
+        let (a, _) = try await twoTracks(m)
+        m.tap(a.id); m.tap(a.id)
+        m.stopAll()
+        #expect(m.paused.isEmpty && m.engine.activeVoiceCount == 0)
+    }
+
+    @Test func moveTrackToOtherBoardMovesFilesAndPersists() async throws {
+        let (m, store) = try makeModel()
+        await m.addBoard(name: "A"); await m.importTracks([try makeTone()])
+        let a = m.boards[0].id, t = m.boards[0].tracks[0]
+        await m.addBoard(name: "B"); let b = m.boards[1].id
+        m.activeBoardID = a
+        await m.moveTrack(t.id, toBoard: b)
+        #expect(m.boards[0].tracks.isEmpty && m.boards[1].tracks.map(\.id) == [t.id])
+        #expect(try await store.audioURL(board: b, fileName: t.fileName) != nil)
+        #expect(try await store.audioURL(board: a, fileName: t.fileName) == nil)   // moved, not copied
+        #expect(m.unavailable.isEmpty)
+        let (m2, _) = try makeModel(store: store); await m2.load()
+        #expect(m2.boards[1].tracks.map(\.id) == [t.id] && m2.boards[0].tracks.isEmpty)
+        m.tap(t.id)
+        #expect(m.playing == [t.id])
+    }
+
+    @Test func moveTrackToSameBoardIsNoOp() async throws {
+        let (m, _) = try makeModel()
+        let t = try await oneTrack(m)
+        await m.moveTrack(t.id, toBoard: m.boards[0].id)
+        #expect(m.boards[0].tracks.map(\.id) == [t.id])
+    }
+
     @Test func moveTracksPersistsOrder() async throws {
         let (m, store) = try makeModel()
         await m.addBoard(name: "Show")

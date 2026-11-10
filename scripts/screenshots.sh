@@ -107,4 +107,9 @@ xcrun simctl launch "$UDID" "$BUNDLE_ID" -seedDemo YES -transportStyle toolbar -
 sleep 4
 xcrun simctl io "$UDID" screenshot "$OUT/$COMMIT-tile-playing-progress.png" >/dev/null
 xcrun simctl terminate "$UDID" "$BUNDLE_ID" >/dev/null 2>&1 || true
+# Paused by a second tap: progress bar stays where it stopped, the tile is no longer highlighted.
+xcrun simctl launch "$UDID" "$BUNDLE_ID" -seedDemo YES -transportStyle toolbar -tileMinWidth 110 -demoPlay "220 Hz,440 Hz" -demoPause "440 Hz" >/dev/null
+sleep 4
+xcrun simctl io "$UDID" screenshot "$OUT/$COMMIT-tile-paused.png" >/dev/null
+xcrun simctl terminate "$UDID" "$BUNDLE_ID" >/dev/null 2>&1 || true
 echo "Fertig: $OUT"

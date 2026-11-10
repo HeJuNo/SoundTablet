@@ -18,6 +18,8 @@ private final class LevelStore: @unchecked Sendable {
         var offset: Double          // file time where the current schedule started
         var epoch = 0               // bumped on seek/stop so stale completions are ignored
         var fadeTask: Task<Void, Never>?
+        var paused = false          // paused by a tap: voice is kept so the next tap can continue
+        var pausedAt: Double?       // file time at the pause (playerTime is not reliable on a paused node)
         init(offset: Double) { self.offset = offset }
     }
 
@@ -120,15 +122,18 @@ private final class LevelStore: @unchecked Sendable {
         onEvent(.started(id))
 
         if s.fadeIn > 0 { fade(v, to: s.volume * gain(s), over: s.fadeIn) }
-        if s.fadeOut > 0, !s.loop {
-            // shortcut: wall-clock timer, drifts if paused; use a render-synced ramp if it ever matters.
-            let delay = max(0, range.upperBound - range.lowerBound - s.fadeOut)
-            let out = s.fadeOut
-            v.fadeTask = Task { [weak self, weak v] in
-                try? await Task.sleep(for: .seconds(delay))
-                guard let self, let v, !Task.isCancelled else { return }
-                self.fade(v, to: 0, over: out)
-            }
+        if !s.loop { scheduleFadeOut(v, fadeOut: s.fadeOut, remaining: range.upperBound - range.lowerBound) }
+    }
+
+    /// Fades to silence so the track is silent when its range ends. shortcut: wall-clock timer, drifts if the
+    /// engine stalls; use a render-synced ramp if it ever matters.
+    private func scheduleFadeOut(_ v: Voice, fadeOut out: Double, remaining: Double) {
+        guard out > 0 else { return }
+        let delay = max(0, remaining - out)
+        v.fadeTask = Task { [weak self, weak v] in
+            try? await Task.sleep(for: .seconds(delay))
+            guard let self, let v, !Task.isCancelled else { return }
+            self.fade(v, to: 0, over: min(out, remaining))
         }
     }
 
@@ -155,7 +160,7 @@ private final class LevelStore: @unchecked Sendable {
         }
     }
 
-    private func finish(_ id: Track.ID, _ v: Voice, event: PlaybackEvent) {
+    private func finish(_ id: Track.ID, _ v: Voice, event: PlaybackEvent?) {
         v.epoch += 1
         v.fadeTask?.cancel()
         v.node.removeTap(onBus: 0)
@@ -163,7 +168,45 @@ private final class LevelStore: @unchecked Sendable {
         engine.detach(v.node)
         voices[id] = nil
         levels.clear(id)
-        onEvent(event)
+        if let event { onEvent(event) }
+    }
+
+    /// Pauses at the current position (with the track's fade-out, if any). Emits `.stopped`, like a stop did before.
+    func pause(_ id: Track.ID) {
+        guard let v = voices[id], !v.paused else { return }
+        v.paused = true
+        v.fadeTask?.cancel()
+        onEvent(.stopped(id))
+        let out = loaded[id]?.track.settings.fadeOut ?? 0
+        let freeze: @MainActor () -> Void = { [weak self, weak v] in
+            guard let self, let v, v.paused, self.voices[id] === v else { return }
+            v.pausedAt = self.position(id)
+            v.node.pause()
+        }
+        if out > 0 { fade(v, to: 0, over: out, done: freeze) } else { freeze() }
+    }
+
+    /// Continues a paused voice where it stopped; if the engine is gone the voice is dropped instead.
+    func resume(_ id: Track.ID) {
+        guard let v = voices[id], v.paused, let l = loaded[id] else { return }
+        if !engine.isRunning { try? startEngine() }
+        guard engine.isRunning else { finish(id, v, event: nil); return }
+        let s = l.track.settings
+        let range = Self.clampedTrim(inTime: s.trimIn, out: s.trimOut, duration: l.duration)
+        let from = v.pausedAt ?? position(id) ?? range.lowerBound
+        v.paused = false
+        v.pausedAt = nil
+        v.fadeTask?.cancel()
+        let remaining = range.upperBound - from
+        v.node.volume = s.volume * gain(s) * ((s.fadeOut > 0 && !s.loop && remaining < s.fadeOut) ? Float(max(0, remaining) / s.fadeOut) : 1)
+        v.node.play()
+        onEvent(.started(id))
+        if !s.loop { scheduleFadeOut(v, fadeOut: s.fadeOut, remaining: remaining) }
+    }
+
+    /// Drops a paused voice without an event (another button was pressed: the paused state is reset).
+    func release(_ id: Track.ID) {
+        if let v = voices[id], v.paused { finish(id, v, event: nil) }
     }
 
     func stop(_ id: Track.ID) { stop(id, fadeOut: nil) }
@@ -191,8 +234,8 @@ private final class LevelStore: @unchecked Sendable {
     }
     func volume(_ id: Track.ID) -> Float? { voices[id]?.node.volume }  // for tests
 
-    func pauseAll() { voices.values.forEach { $0.node.pause() } }
-    func resumeAll() { if engine.isRunning { voices.values.forEach { $0.node.play() } } }
+    func pauseAll() { voices.values.filter { !$0.paused }.forEach { $0.node.pause() } }
+    func resumeAll() { if engine.isRunning { voices.values.filter { !$0.paused }.forEach { $0.node.play() } } }
     func stopAll(fadeOut: Double) { for id in Array(voices.keys) { stop(id, fadeOut: fadeOut) } }
     func isPlaying(_ id: Track.ID) -> Bool { voices[id] != nil }
     func level(_ id: Track.ID) -> Float { levels.get(id) }
@@ -204,8 +247,9 @@ private final class LevelStore: @unchecked Sendable {
     }
 
     func position(_ id: Track.ID) -> Double? {
+        if let v = voices[id], v.paused, let p = v.pausedAt { return p }
         guard let v = voices[id], let l = loaded[id],
-              let nt = v.node.lastRenderTime, let pt = v.node.playerTime(forNodeTime: nt) else { return nil }
+              let nt = v.node.lastRenderTime, nt.isSampleTimeValid || nt.isHostTimeValid, let pt = v.node.playerTime(forNodeTime: nt) else { return nil }
         let s = l.track.settings
         let range = Self.clampedTrim(inTime: s.trimIn, out: s.trimOut, duration: l.duration)
         var elapsed = (v.offset - range.lowerBound) + Double(pt.sampleTime) / pt.sampleRate

@@ -54,13 +54,42 @@ import Testing
         #expect(read(local, "d/" + copies[0]) == "local edit")
     }
 
-    @Test func neverDeletesEitherSide() throws {
+    @Test func deletionOnOneSidePropagates() throws {
+        try write(local, "A/board.json", "v1", mtime: 1000); try write(local, "A/x.wav", "v1", mtime: 1000)
+        try write(local, "B/board.json", "v1", mtime: 1000); _ = try sync()
+        try fm.removeItem(at: local.appendingPathComponent("A"))           // board deleted on this device
+        try fm.removeItem(at: cloud.appendingPathComponent("B/board.json")) // board deleted on another device
+        let r = try sync()
+        #expect(read(cloud, "A/board.json") == nil && read(cloud, "A/x.wav") == nil)
+        #expect(read(local, "B/board.json") == nil)
+        #expect(!fm.fileExists(atPath: cloud.appendingPathComponent("A").path))   // no empty folder left behind
+        #expect(r.removed == 3)
+        #expect(try sync() == SyncReport())
+    }
+
+    @Test func editBeatsDeletionOnTheOtherSide() throws {
         try write(local, "a.txt", "v1", mtime: 1000); try write(local, "b.txt", "v1", mtime: 1000); _ = try sync()
         try fm.removeItem(at: local.appendingPathComponent("a.txt"))
+        try write(cloud, "a.txt", "edited", mtime: 2000)                   // changed elsewhere meanwhile
         try fm.removeItem(at: cloud.appendingPathComponent("b.txt"))
+        try write(local, "b.txt", "edited", mtime: 2000)
         _ = try sync()
-        #expect(read(local, "a.txt") == "v1" && read(cloud, "a.txt") == "v1")   // came back from the other side
-        #expect(read(local, "b.txt") == "v1" && read(cloud, "b.txt") == "v1")
+        #expect(read(local, "a.txt") == "edited" && read(cloud, "b.txt") == "edited")
+    }
+
+    @Test func notDownloadedFileIsNotTreatedAsDeleted() throws {
+        try write(local, "a.wav", "v1", mtime: 1000); _ = try sync()
+        try fm.removeItem(at: cloud.appendingPathComponent("a.wav"))
+        try write(cloud, ".a.wav.icloud", "placeholder", mtime: 1000)     // iCloud evicted it, it is still there
+        _ = try sync()
+        #expect(read(local, "a.wav") == "v1")
+    }
+
+    @Test func onlyChangedSideWinsEvenWithOlderTimestamp() throws {
+        try write(local, "board.json", "old", mtime: 5000); _ = try sync()
+        try write(local, "board.json", "renamed", mtime: 4000)             // e.g. clock behind: still the only edit
+        _ = try sync()
+        #expect(read(cloud, "board.json") == "renamed")
     }
 
     @Test func secondSyncIsNoOp() throws {

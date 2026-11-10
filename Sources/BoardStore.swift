@@ -8,6 +8,7 @@ protocol BoardStore: Sendable {
     func importAudio(from url: URL, into board: Board.ID, as track: Track.ID) async throws -> String
     /// nil when the file is missing (or, for iCloud, not downloaded yet).
     func audioURL(board: Board.ID, fileName: String) async throws -> URL?
+    func deleteFile(board: Board.ID, fileName: String) async throws
 }
 
 func sanitizedFolderName(_ s: String) -> String {
@@ -76,5 +77,10 @@ struct LocalBoardStore: BoardStore {
         guard let dir = try folder(for: board) else { return nil }
         let url = dir.appendingPathComponent(fileName)
         return fm.fileExists(atPath: url.path) ? url : nil
+    }
+
+    func deleteFile(board: Board.ID, fileName: String) async throws {
+        guard let dir = try folder(for: board) else { return }
+        try? fm.removeItem(at: dir.appendingPathComponent(fileName))
     }
 }

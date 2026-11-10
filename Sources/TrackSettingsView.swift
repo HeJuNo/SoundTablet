@@ -68,7 +68,7 @@ struct ColorSwatches: View {
             ForEach(tilePalette, id: \.self) { hex in
                 Button { pick(hex) } label: {
                     Circle().fill(Color(hex: hex)).frame(width: 28, height: 28)
-                        .overlay(Circle().stroke(.primary, lineWidth: hex == selected ? 3 : 0))
+                        .overlay(Circle().strokeBorder(.primary, lineWidth: hex == selected ? 3 : 0))  // inside the frame: the scroll view clips anything outside
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("Colour \(hex)").accessibilityAddTraits(hex == selected ? .isSelected : [])

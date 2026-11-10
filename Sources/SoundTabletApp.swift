@@ -25,6 +25,10 @@ struct SoundTabletApp: App {
                     for name in (UserDefaults.standard.string(forKey: "demoPlay") ?? "").split(separator: ",") {
                         if let t = model.activeBoard?.tracks.first(where: { $0.name == name }) { model.tap(t.id) }
                     }
+                    try? await Task.sleep(for: .seconds(0.7))  // `-demoPause "440 Hz"`: tap again = pause
+                    for name in (UserDefaults.standard.string(forKey: "demoPause") ?? "").split(separator: ",") {
+                        if let t = model.activeBoard?.tracks.first(where: { $0.name == name }) { model.tap(t.id) }
+                    }
                     #endif
                 }
                 // "periodic" sync: whenever the app leaves or re-enters the foreground (iOS has no reliable timers)

@@ -3,6 +3,7 @@ import Foundation
 struct SyncReport: Equatable, Sendable {
     var copiedToCloud = 0
     var copiedToLocal = 0
+    var removed = 0            // deletions carried over from the other side
     var conflicts: [String] = []
     var pendingDownloads = 0
     var errors: [String] = []
@@ -15,9 +16,10 @@ enum ICloudLocation {
     }
 }
 
-/// Two-way mirror between the local store and an iCloud Drive folder. Never deletes anything:
-/// a file removed on one side is copied back from the other; a file changed on both sides keeps
-/// the older version as "<name> (Konflikt <date>).<ext>".
+/// Two-way mirror between the local store and an iCloud Drive folder. A file removed on one side is removed on the
+/// other too, but only if the other side is unchanged since the last sync (an edit beats a deletion); files iCloud
+/// has not downloaded are never taken for deleted. A file changed on both sides keeps the older version as
+/// "<name> (Konflikt <date>).<ext>".
 final class SyncService: @unchecked Sendable {
     private let local: URL, cloud: URL
     private let fm = FileManager.default
@@ -37,7 +39,8 @@ final class SyncService: @unchecked Sendable {
             report.pendingDownloads += 1
         }
 
-        for path in Set(localFiles.keys).union(cloudFiles.keys).sorted() {
+        let evicted = Set(placeholders.map(Self.realPath))
+        for path in Set(localFiles.keys).union(cloudFiles.keys).sorted() where !evicted.contains(path) {
             let l = localFiles[path], c = cloudFiles[path]
             do { try syncOne(path, l, c, &state, &report) } catch { report.errors.append(path) }  // one bad file must not stop the rest
         }
@@ -47,14 +50,18 @@ final class SyncService: @unchecked Sendable {
 
     private func syncOne(_ path: String, _ l: Double?, _ c: Double?, _ state: inout [String: Double], _ report: inout SyncReport) throws {
             switch (l, c) {
-            case let (l?, nil): try copy(local, cloud, path, mtime: l); state[path] = l; report.copiedToCloud += 1
-            case let (nil, c?): try copy(cloud, local, path, mtime: c); state[path] = c; report.copiedToLocal += 1
+            case let (l?, nil):
+                if let last = state[path], abs(l - last) < 1 { try remove(local, path); state[path] = nil; report.removed += 1 }
+                else { try copy(local, cloud, path, mtime: l); state[path] = l; report.copiedToCloud += 1 }
+            case let (nil, c?):
+                if let last = state[path], abs(c - last) < 1 { try remove(cloud, path); state[path] = nil; report.removed += 1 }
+                else { try copy(cloud, local, path, mtime: c); state[path] = c; report.copiedToLocal += 1 }
             case let (l?, c?):
                 if abs(l - c) < 1 { state[path] = l; return }
                 let last = state[path]
                 let lChanged = last.map { abs(l - $0) >= 1 } ?? true
                 let cChanged = last.map { abs(c - $0) >= 1 } ?? true
-                let localWins = l > c
+                let localWins = lChanged != cChanged ? lChanged : l > c  // a lone edit wins whatever the clocks say
                 if lChanged && cChanged {
                     try keepConflictCopy(of: path, in: localWins ? cloud : local)
                     report.conflicts.append(path)
@@ -80,6 +87,24 @@ final class SyncService: @unchecked Sendable {
             out[rel] = v.contentModificationDate?.timeIntervalSince1970 ?? 0
         }
         return (out, placeholders)
+    }
+
+    /// "dir/.name.icloud" -> "dir/name"
+    private static func realPath(_ placeholder: String) -> String {
+        let u = URL(fileURLWithPath: placeholder), name = u.lastPathComponent
+        let real = String(name.dropFirst().dropLast(".icloud".count))
+        return u.deletingLastPathComponent().path == "/" ? real : u.deletingLastPathComponent().path.dropFirst() + "/" + real
+    }
+
+    /// Removes the file and its folders once they are empty.
+    private func remove(_ root: URL, _ path: String) throws {
+        var u = root.appendingPathComponent(path)
+        try fm.removeItem(at: u)
+        u.deleteLastPathComponent()
+        while u.standardizedFileURL.path != root.standardizedFileURL.path,
+              (try? fm.contentsOfDirectory(atPath: u.path).filter { $0 != ".DS_Store" }.isEmpty) == true {
+            try? fm.removeItem(at: u); u.deleteLastPathComponent()
+        }
     }
 
     private func copy(_ from: URL, _ to: URL, _ path: String, mtime: Double) throws {

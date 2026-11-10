@@ -65,7 +65,7 @@ struct BoardView: View {
                         .draggable(b.id.uuidString)
                         .dropDestination(for: String.self) { items, _ in
                             guard let s = items.first, let id = UUID(uuidString: s) else { return false }
-                            Task { await model.moveBoard(id, before: b.id) }
+                            Task { if model.boardID(of: id) != nil { await model.moveTrack(id, toBoard: b.id) } else { await model.moveBoard(id, before: b.id) } }
                             return true
                         }
                 }

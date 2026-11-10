@@ -49,6 +49,57 @@ func makeTone(seconds: Double = 1, amplitude: Float = 0.5) throws -> URL {
         #expect(!e.isPlaying(t.id))
     }
 
+    @Test func pauseKeepsPositionAndResumeContinues() throws {
+        let (e, log) = makeEngine(); let t = track()
+        try e.load(t, url: try makeTone(seconds: 4))
+        e.play(t.id)
+        try e.renderOffline(seconds: 1)
+        e.pause(t.id)
+        let at = try #require(e.position(t.id))
+        #expect(at > 0.9 && at < 1.1)
+        try e.renderOffline(seconds: 1)
+        #expect(e.position(t.id) == at)          // frozen while paused
+        #expect(e.isPlaying(t.id))               // voice is kept for resuming
+        e.resume(t.id)
+        try e.renderOffline(seconds: 1)
+        let after = try #require(e.position(t.id))
+        #expect(after > at + 0.9)
+        #expect(log.events == [.started(t.id), .stopped(t.id), .started(t.id)])
+    }
+
+    @Test func releaseDropsPausedVoiceSilently() throws {
+        let (e, log) = makeEngine(); let t = track()
+        try e.load(t, url: try makeTone(seconds: 4))
+        e.play(t.id); e.pause(t.id); e.release(t.id)
+        #expect(!e.isPlaying(t.id) && e.activeVoiceCount == 0)
+        #expect(log.events == [.started(t.id), .stopped(t.id)])
+    }
+
+    @Test func resumeAllSkipsTrackPausedVoices() throws {
+        let (e, _) = makeEngine(); let t = track()
+        try e.load(t, url: try makeTone(seconds: 4))
+        e.play(t.id); try e.renderOffline(seconds: 0.5); e.pause(t.id)
+        let at = e.position(t.id)
+        e.pauseAll(); e.resumeAll()
+        try e.renderOffline(seconds: 0.5)
+        #expect(e.position(t.id) == at)
+    }
+
+    @Test func pauseWithFadeOutRampsDownThenFreezes() async throws {
+        let (e, _) = makeEngine(); var t = track()
+        t.settings.fadeOut = 0.2
+        try e.load(t, url: try makeTone(seconds: 4))
+        e.play(t.id)
+        try e.renderOffline(seconds: 0.5)
+        e.pause(t.id)
+        try await Task.sleep(for: .milliseconds(100))
+        let mid = try #require(e.volume(t.id))
+        #expect(mid < t.settings.volume)         // fading, not yet silent-and-paused
+        try await Task.sleep(for: .milliseconds(300))
+        e.resume(t.id)
+        #expect(e.volume(t.id) == t.settings.volume)  // full volume again after resume
+    }
+
     @Test func retapRestartsSingleNode() throws {
         let (e, log) = makeEngine(); let t = track()
         try e.load(t, url: try makeTone())
