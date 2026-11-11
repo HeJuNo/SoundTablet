@@ -90,15 +90,18 @@ private final class LevelStore: @unchecked Sendable {
 
     // MARK: transport
 
-    func play(_ id: Track.ID) {
+    /// `from` starts inside the trimmed range (editor playhead); outside of it, or at the very end, playback starts at the trim start.
+    func play(_ id: Track.ID) { play(id, from: nil) }
+    func play(_ id: Track.ID, from: Double?) {
         guard let l = loaded[id] else { return }
         let s = l.track.settings
         let range = Self.clampedTrim(inTime: s.trimIn, out: s.trimOut, duration: l.duration)
         guard range.upperBound > range.lowerBound, let file = try? AVAudioFile(forReading: l.url) else { return }
         if s.solo { for other in voices.keys where other != id { stop(other) } }
         if voices[id] != nil { stop(id) }
+        let start = from.flatMap { range.contains($0) && $0 < range.upperBound - 0.01 ? $0 : nil } ?? range.lowerBound
 
-        let v = Voice(offset: range.lowerBound)
+        let v = Voice(offset: start)
         engine.attach(v.node)
         engine.connect(v.node, to: engine.mainMixerNode, format: file.processingFormat)
         v.node.volume = s.fadeIn > 0 ? 0 : s.volume * gain(s)
@@ -109,7 +112,7 @@ private final class LevelStore: @unchecked Sendable {
             levels.set(id, min(1, (sum / Float(buf.frameLength)).squareRoot() * 2))
         }
         voices[id] = v
-        schedule(id, v, file: file, from: range.lowerBound, range: range, loop: s.loop, copies: s.loop ? 2 : 1)
+        schedule(id, v, file: file, from: start, range: range, loop: s.loop, copies: s.loop ? 2 : 1)
         if !engine.isRunning { try? startEngine() }
         guard engine.isRunning else {  // e.g. during a call: node.play() would raise an ObjC exception and kill the app
             v.node.removeTap(onBus: 0)
@@ -122,7 +125,7 @@ private final class LevelStore: @unchecked Sendable {
         onEvent(.started(id))
 
         if s.fadeIn > 0 { fade(v, to: s.volume * gain(s), over: s.fadeIn) }
-        if !s.loop { scheduleFadeOut(v, fadeOut: s.fadeOut, remaining: range.upperBound - range.lowerBound) }
+        if !s.loop { scheduleFadeOut(v, fadeOut: s.fadeOut, remaining: range.upperBound - start) }
     }
 
     /// Fades to silence so the track is silent when its range ends. shortcut: wall-clock timer, drifts if the
@@ -258,7 +261,7 @@ private final class LevelStore: @unchecked Sendable {
     }
 
     func seek(_ id: Track.ID, to time: Double) {
-        guard let v = voices[id], let l = loaded[id], let file = try? AVAudioFile(forReading: l.url) else { return }
+        guard let v = voices[id], !v.paused, let l = loaded[id], let file = try? AVAudioFile(forReading: l.url) else { return }
         let s = l.track.settings
         let range = Self.clampedTrim(inTime: s.trimIn, out: s.trimOut, duration: l.duration)
         guard engine.isRunning else { finish(id, v, event: .stopped(id)); return }
@@ -271,6 +274,11 @@ private final class LevelStore: @unchecked Sendable {
         v.offset = t
         schedule(id, v, file: file, from: t, range: range, loop: s.loop, copies: s.loop ? 2 : 1)
         v.node.play()
+        // The fade timers belong to the old position: restart them for the new one (a fade-in cut short just jumps to full volume).
+        v.fadeTask?.cancel()
+        let remaining = range.upperBound - t
+        v.node.volume = s.volume * gain(s) * ((s.fadeOut > 0 && !s.loop && remaining < s.fadeOut) ? Float(max(0, remaining) / s.fadeOut) : 1)
+        if !s.loop { scheduleFadeOut(v, fadeOut: s.fadeOut, remaining: remaining) }
     }
 
     // MARK: helpers

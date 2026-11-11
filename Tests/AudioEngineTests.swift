@@ -175,4 +175,26 @@ func makeTone(seconds: Double = 1, amplitude: Float = 0.5) throws -> URL {
         #expect(!e.isPlaying(t.id))
         #expect(log.events == [.started(t.id), .ended(t.id)])
     }
+
+    @Test func playFromStartsAtThatPositionAndFallsBackOutsideTheRange() throws {
+        let (e, _) = makeEngine(); let t = track()
+        try e.load(t, url: try makeTone(seconds: 4))
+        e.play(t.id, from: 2.5)
+        try e.renderOffline(seconds: 0.1)
+        #expect(abs(try #require(e.position(t.id)) - 2.6) < 0.05)
+        e.play(t.id, from: 99)                                  // outside the file: normal start
+        try e.renderOffline(seconds: 0.1)
+        #expect(try #require(e.position(t.id)) < 0.3)
+    }
+
+    @Test func seekRestartsTheFadeOutForTheNewPosition() throws {
+        let (e, _) = makeEngine()
+        var t = track(); t.settings.fadeOut = 1
+        try e.load(t, url: try makeTone(seconds: 4))
+        e.play(t.id)
+        e.seek(t.id, to: 3.5)                                   // inside the last second: starts already faded
+        #expect(abs(try #require(e.volume(t.id)) - 0.5) < 0.01)
+        e.seek(t.id, to: 1)                                     // back out of it: full volume again
+        #expect(abs(try #require(e.volume(t.id)) - 1) < 0.01)
+    }
 }

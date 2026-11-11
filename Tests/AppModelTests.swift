@@ -49,6 +49,28 @@ import UIKit
         #expect(m.playing.contains(a.id) && m.paused.isEmpty)
     }
 
+    @Test func skipJumpsForwardAndBackWithinTheTrack() async throws {
+        let (m, _) = try makeModel()
+        let (a, _) = try await twoTracks(m)                      // 4 s tracks
+        m.skip(a.id, by: 1)                                      // not playing: ignored
+        m.tap(a.id); try m.engine.renderOffline(seconds: 0.1)
+        m.skip(a.id, by: 2); try m.engine.renderOffline(seconds: 0.1)
+        #expect(abs(try #require(m.engine.position(a.id)) - 2.2) < 0.05)
+        m.skip(a.id, by: -5); try m.engine.renderOffline(seconds: 0.1)
+        #expect(try #require(m.engine.position(a.id)) < 0.2)     // clamped to the start
+        #expect(m.playing.contains(a.id))
+    }
+
+    @Test func playFromCueResetsPausedButtons() async throws {
+        let (m, _) = try makeModel()
+        let (a, b) = try await twoTracks(m)
+        m.tap(a.id); m.tap(a.id)                                  // a paused
+        m.play(b.id, from: 2)
+        try m.engine.renderOffline(seconds: 0.1)
+        let p = try #require(m.engine.position(b.id))
+        #expect(m.paused.isEmpty && !m.engine.isPlaying(a.id) && abs(p - 2.1) < 0.05)
+    }
+
     @Test func doubleTapOnPausedRestartsFromStart() async throws {
         let (m, _) = try makeModel()
         let (a, _) = try await twoTracks(m)

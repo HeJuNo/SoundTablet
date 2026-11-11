@@ -37,6 +37,9 @@ struct DefaultsView: View {
                           maximumValueLabel: { Image(systemName: "square.grid.2x2").accessibilityHidden(true) }
                     }
                     Text("The grid fits as many buttons per row as the screen allows at this size.").font(.footnote).foregroundStyle(.secondary)
+                    Picker("Board buttons", selection: $m.boardBarStyle) {
+                        ForEach(BoardBarStyle.allCases) { Text($0.title).tag($0) }
+                    }
                     Picker("Pause / Stop / Fade out", selection: $m.transportStyle) {
                         ForEach(TransportStyle.allCases) { Text($0.title).tag($0) }
                     }

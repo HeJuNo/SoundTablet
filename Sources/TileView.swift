@@ -13,6 +13,9 @@ struct TileView: View {
         let n = Int(max(0, t)); return String(format: "%02d:%02d", n / 60, n % 60)
     }
 
+    /// Swiping a playing button right / left jumps this far forward / back.
+    static let skipSeconds = 5.0
+
     @Environment(AppModel.self) private var model
     @State private var image: UIImage?
 
@@ -87,6 +90,12 @@ struct TileView: View {
         .accessibilityLabel(track.name)
         .accessibilityValue(([missing ? "Audio file missing" : isPlaying ? "Playing" : isPaused ? "Paused" : "Stopped"]
             + Self.icons(track.settings, hasAutomations: !track.automations.isEmpty).filter(\.on).map(\.name)).joined(separator: ", "))
+        .simultaneousGesture(DragGesture(minimumDistance: 24).onEnded { v in  // mostly horizontal swipes only; vertical drags still scroll
+            guard abs(v.translation.width) > 40, abs(v.translation.width) > 2 * abs(v.translation.height) else { return }
+            model.skip(track.id, by: v.translation.width > 0 ? Self.skipSeconds : -Self.skipSeconds)
+        })
+        .accessibilityAction(named: "Skip forward") { model.skip(track.id, by: Self.skipSeconds) }
+        .accessibilityAction(named: "Skip back") { model.skip(track.id, by: -Self.skipSeconds) }
         .contextMenu {
             Button("Settings", systemImage: "slider.horizontal.3") { model.editingTrackID = track.id }
             if model.boards.count > 1 {

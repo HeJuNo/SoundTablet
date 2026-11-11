@@ -54,13 +54,13 @@ struct BoardView: View {
     }
 
     private var boardPicker: some View {
+        ScrollViewReader { proxy in
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack {
+            HStack(spacing: model.boardBarStyle == .tabs ? 6 : 8) {
                 ForEach(model.boards) { b in
-                    Button { model.activeBoardID = b.id } label: { Text(b.name).lineLimit(1).fixedSize() }
-                        .buttonStyle(.borderedProminent)
+                    boardButton(b)
+                        .id(b.id)
                         .accessibilityAddTraits(b.id == model.activeBoardID ? .isSelected : [])
-                        .tint(b.id == model.activeBoardID ? Color(hex: b.colorHex).mix(with: .black, by: 0.3) : .gray.mix(with: .black, by: 0.45))  // white title stays readable on both
                         .contextMenu { Button("Edit board…", systemImage: "pencil") { model.editingBoardID = b.id } }
                         .draggable(b.id.uuidString)
                         .dropDestination(for: String.self) { items, _ in
@@ -75,5 +75,48 @@ struct BoardView: View {
             .padding(.horizontal)
             .padding(.vertical, 8)
         }
+        .onChange(of: model.activeBoardID) { _, id in if let id { withAnimation { proxy.scrollTo(id, anchor: .center) } } }  // keep the selected board in view
+        .task(id: model.boards.count) { if let id = model.activeBoardID { proxy.scrollTo(id, anchor: .center) } }
+        }
     }
+
+    @ViewBuilder private func boardButton(_ b: Board) -> some View {
+        let selected = b.id == model.activeBoardID, color = Color(hex: b.colorHex)
+        switch model.boardBarStyle {
+        case .chips:  // filled pill: board colour when selected, grey otherwise
+            Button { model.activeBoardID = b.id } label: { Text(b.name).lineLimit(1).fixedSize() }
+                .buttonStyle(.borderedProminent)
+                .tint(selected ? color.mix(with: .black, by: 0.3) : .gray.mix(with: .black, by: 0.45))  // white title stays readable on both
+        case .tabs:  // plain titles with a colour dot; the selected one is bold with a coloured underline
+            Button { model.activeBoardID = b.id } label: {
+                VStack(spacing: 4) {
+                    HStack(spacing: 6) {
+                        Circle().fill(color).frame(width: 10, height: 10)
+                        Text(b.name).font(.headline).fontWeight(selected ? .bold : .regular).lineLimit(1).fixedSize()
+                    }
+                    Capsule().fill(selected ? color : .clear).frame(height: 3)
+                }
+                .padding(.horizontal, 10).frame(minHeight: 44)
+                .foregroundStyle(.primary)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+        case .colors:  // every board in its own colour; the selected one is brighter and ringed
+            Button { model.activeBoardID = b.id } label: {
+                Text(b.name).font(.headline).fontWeight(selected ? .bold : .regular).lineLimit(1).fixedSize()
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 14).frame(minHeight: 44)
+                    .background(color.mix(with: .black, by: selected ? 0.25 : 0.5), in: RoundedRectangle(cornerRadius: 10))
+                    .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(.primary, lineWidth: selected ? 3 : 0))
+            }
+            .buttonStyle(.plain)
+        }
+    }
+}
+
+/// Look of the board buttons above the grid (Defaults > Display).
+enum BoardBarStyle: String, CaseIterable, Identifiable {
+    case chips, tabs, colors
+    var id: String { rawValue }
+    var title: String { switch self { case .chips: "Pills"; case .tabs: "Tabs"; case .colors: "Colours" } }
 }

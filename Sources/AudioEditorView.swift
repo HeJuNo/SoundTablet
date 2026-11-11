@@ -16,7 +16,10 @@ struct AudioEditorView: View {
     @State private var snap = true
     @State private var dragIn: Double?
     @State private var dragOut: Double?
-    @State private var cue = 0.0                       // playhead while stopped
+    @State private var cue = 0.0                       // playhead while stopped; Play starts here
+    @State private var scrub: Double?                  // playhead while it is being dragged
+    @State private var undoStack: [(inT: Double, outT: Double?, loop: Bool)] = []  // earlier In / Out / Loop states, newest last
+    @State private var dragOrigin: Double?             // time of the grabbed handle / playhead when the drag began
     @State private var scroll = ScrollPosition(edge: .leading)
     @State private var offsetX: CGFloat = 0
     @State private var viewW: CGFloat = 300
@@ -50,9 +53,11 @@ struct AudioEditorView: View {
     private func transport(_ t: Track, duration: Double) -> some View {
         HStack {
             let playing = model.playing.contains(trackID)
-            Button(playing ? "Stop" : "Play", systemImage: playing ? "stop.fill" : "play.fill") { model.tap(trackID) }
+            Button(playing ? "Stop" : "Play", systemImage: playing ? "stop.fill" : "play.fill") {
+                if playing { model.stop(trackID) } else { model.play(trackID, from: cue) }
+            }
                 .buttonStyle(.borderedProminent)
-            Toggle(isOn: Binding(get: { t.settings.loop }, set: { v in model.edit(trackID) { $0.settings.loop = v } })) {
+            Toggle(isOn: Binding(get: { t.settings.loop }, set: { v in remember(t); model.edit(trackID) { $0.settings.loop = v } })) {
                 Label("Loop", systemImage: "repeat")
             }
             .toggleStyle(.button).buttonStyle(.bordered)
@@ -67,7 +72,7 @@ struct AudioEditorView: View {
     }
 
     /// Where the audio is right now: the live playhead while playing, otherwise the cue the user placed.
-    private var position: Double { model.playing.contains(trackID) ? (model.engine.position(trackID) ?? cue) : cue }
+    private var position: Double { scrub ?? (model.playing.contains(trackID) ? (model.engine.position(trackID) ?? cue) : cue) }
 
     // MARK: waveform
 
@@ -90,14 +95,26 @@ struct AudioEditorView: View {
                     Rectangle().fill(.black.opacity(0.5)).frame(width: w * (1 - outT / d) + inset).offset(x: inset + w * outT / d).padding(.top, 20)
                     playhead(width: w, duration: d)
                     handle("Start", time: inT, x: inset + w * inT / d, color: .green)
-                        .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .named("wave"))
-                            .onChanged { dragIn = min(max(0, ($0.location.x - inset) / w * d), outT - 0.001) }
-                            .onEnded { _ in if let v = dragIn { Task { await commit(inT: v, snapping: snap) } }; dragIn = nil })
+                        .highPriorityGesture(DragGesture(minimumDistance: 0, coordinateSpace: .named("wave"))
+                            .onChanged { g in
+                                dragOrigin = dragOrigin ?? inT  // move by the finger's travel, so the handle does not jump to the touch point
+                                dragIn = min(max(0, dragOrigin! + g.translation.width / w * d), outT - 0.001)
+                            }
+                            .onEnded { _ in
+                                dragOrigin = nil
+                                if let v = dragIn { Task { await commit(inT: v, snapping: snap); dragIn = nil } }  // keep the handle where it is until the snapped value is stored
+                            })
                         .accessibilityAdjustableAction { dir in nudge(in: dir == .increment ? step : -step) }
                     handle("End", time: outT, x: inset + w * outT / d, color: .red)
-                        .gesture(DragGesture(minimumDistance: 0, coordinateSpace: .named("wave"))
-                            .onChanged { dragOut = max(min(duration, ($0.location.x - inset) / w * d), inT + 0.001) }
-                            .onEnded { _ in if let v = dragOut { Task { await commit(outT: v, snapping: snap) } }; dragOut = nil })
+                        .highPriorityGesture(DragGesture(minimumDistance: 0, coordinateSpace: .named("wave"))
+                            .onChanged { g in
+                                dragOrigin = dragOrigin ?? outT
+                                dragOut = max(min(duration, dragOrigin! + g.translation.width / w * d), inT + 0.001)
+                            }
+                            .onEnded { _ in
+                                dragOrigin = nil
+                                if let v = dragOut { Task { await commit(outT: v, snapping: snap); dragOut = nil } }
+                            })
                         .accessibilityAdjustableAction { dir in nudge(out: dir == .increment ? step : -step) }
                 }
                 .frame(width: w + 2 * inset, height: waveHeight)
@@ -105,6 +122,7 @@ struct AudioEditorView: View {
                 .coordinateSpace(name: "wave")
                 .onTapGesture(coordinateSpace: .named("wave")) { loc in place(at: min(max(0, (loc.x - inset) / w * d), d)) }
             }
+            .scrollDisabled(dragIn != nil || dragOut != nil || scrub != nil)  // a drag on a handle or the playhead must not scroll
             .scrollPosition($scroll)
             .onScrollGeometryChange(for: CGFloat.self) { $0.contentOffset.x } action: { _, x in offsetX = x }
             .simultaneousGesture(MagnifyGesture()
@@ -143,11 +161,13 @@ struct AudioEditorView: View {
             Circle().fill(color).frame(width: 12, height: 12).offset(y: -waveHeight / 2 + 26)
         }
         .frame(width: 44, height: waveHeight)
-        .contentShape(Rectangle())
+        .contentShape(Path(CGRect(x: 0, y: 0, width: 44, height: waveHeight * 0.55)))  // upper part only: the playhead is grabbed at the bottom, so both stay reachable on the same spot
         .offset(x: x - 22)
         .accessibilityLabel("\(name) point").accessibilityValue(LoopDetector.clock(time))
     }
 
+    /// Playhead: drag its bottom knob (44 x 56 pt grab area) to scrub; the rest of the line lets taps through to place it.
+    /// The handles are grabbed in the upper half, so a handle and the playhead on the same spot never block each other.
     private func playhead(width: CGFloat, duration: Double) -> some View {
         TimelineView(.animation(minimumInterval: 1.0 / 30, paused: !model.playing.contains(trackID))) { _ in
             ZStack(alignment: .top) {
@@ -155,11 +175,23 @@ struct AudioEditorView: View {
                 Image(systemName: "arrowtriangle.down.fill").font(.system(size: 9)).offset(y: -6)
             }
             .padding(.top, 20)
-            .frame(height: waveHeight)
-            .offset(x: inset + width * position / duration - 1)
-            .accessibilityHidden(true)
+            .frame(width: 44, height: waveHeight, alignment: .top)
+            .overlay(alignment: .bottom) { Image(systemName: "arrowtriangle.up.circle.fill").font(.system(size: 22)).padding(.bottom, 6) }
+            .contentShape(Path(CGRect(x: 0, y: waveHeight - 56, width: 44, height: 56)))
+            .offset(x: inset + width * position / duration - 22)
+            .highPriorityGesture(DragGesture(minimumDistance: 0, coordinateSpace: .named("wave"))
+                .onChanged { g in
+                    dragOrigin = dragOrigin ?? position
+                    scrub = min(max(0, dragOrigin! + g.translation.width / width * duration), duration)
+                }
+                .onEnded { _ in
+                    dragOrigin = nil
+                    if let t = scrub { place(at: t) }
+                    scrub = nil
+                })
+            .accessibilityElement().accessibilityLabel("Playhead").accessibilityValue(LoopDetector.clock(position))
+            .accessibilityAdjustableAction { dir in place(at: min(max(0, position + (dir == .increment ? step : -step)), duration)) }
         }
-        .allowsHitTesting(false)
     }
 
     // MARK: zoom
@@ -210,6 +242,8 @@ struct AudioEditorView: View {
                     .accessibilityLabel("Set In to playhead")
                 Button("Set Out") { Task { await commit(outT: position, snapping: snap) } }
                     .accessibilityLabel("Set Out to playhead")
+                Button("Undo", systemImage: "arrow.uturn.backward") { undo() }
+                    .disabled(undoStack.isEmpty)
                 Spacer()
                 Text("Length \(LoopDetector.clock(outT - inT))").font(.footnote).foregroundStyle(.secondary)
             }
@@ -224,6 +258,18 @@ struct AudioEditorView: View {
     }
 
     // MARK: actions
+
+    private func remember(_ t: Track) {
+        undoStack.append((t.settings.trimIn, t.settings.trimOut, t.settings.loop))
+        if undoStack.count > 50 { undoStack.removeFirst() }
+    }
+
+    /// Takes back the last change to In, Out or Loop.
+    private func undo() {
+        guard let u = undoStack.popLast() else { return }
+        model.edit(trackID) { $0.settings.loop = u.loop }
+        Task { await model.setTrim(trackID, trimIn: u.inT, trimOut: u.outT) }
+    }
 
     private func place(at time: Double) {
         cue = time
@@ -249,6 +295,7 @@ struct AudioEditorView: View {
             guard snapping, let url else { return v }
             return await ZeroCrossing.nearestTime(url: url, to: v)
         }
+        remember(t)
         var newIn = t.settings.trimIn, newOut = t.settings.trimOut
         if let v = inT { newIn = await snapped(v) }
         if let v = outT { newOut = await snapped(v) }

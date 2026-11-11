@@ -41,6 +41,9 @@ struct SyncConfig: Sendable {
             userDefaults.set(tileMinWidth, forKey: "tileMinWidth")
         }
     }
+    var boardBarStyle: BoardBarStyle = .chips {
+        didSet { userDefaults.set(boardBarStyle.rawValue, forKey: "boardBarStyle") }
+    }
     var transportStyle: TransportStyle = .toolbar {
         didSet { userDefaults.set(transportStyle.rawValue, forKey: "transportStyle") }
     }
@@ -69,6 +72,7 @@ struct SyncConfig: Sendable {
         }
         engine = AudioEngine(onEvent: { [weak self] in self?.handle($0) }, manualRendering: manualRendering)
         if userDefaults.object(forKey: "tileMinWidth") != nil { tileMinWidth = userDefaults.double(forKey: "tileMinWidth") }
+        if let b = userDefaults.string(forKey: "boardBarStyle").flatMap(BoardBarStyle.init(rawValue:)) { boardBarStyle = b }
         if let t = userDefaults.string(forKey: "transportStyle").flatMap(TransportStyle.init(rawValue:)) { transportStyle = t }
         if let r = userDefaults.object(forKey: "referenceDB") as? Double {
             referenceDB = r; referenceName = userDefaults.string(forKey: "referenceName"); engine.referenceDB = r
@@ -420,6 +424,23 @@ struct SyncConfig: Sendable {
         } else {
             engine.play(id)
         }
+    }
+
+    /// Starts the button at `time` (editor playhead) instead of its trim start; other paused buttons are reset like on a tap.
+    func play(_ id: Track.ID, from time: Double) {
+        guard !unavailable.contains(id) else { return }
+        for other in paused { engine.release(other) }
+        paused = []
+        engine.play(id, from: time)
+    }
+
+    /// Stops this button for good (no pause): used by the editor's Stop.
+    func stop(_ id: Track.ID) { engine.stop(id) }
+
+    /// Swipe on a playing button: jumps `seconds` forward (positive) or back, within the trimmed range.
+    func skip(_ id: Track.ID, by seconds: Double) {
+        guard playing.contains(id), !paused.contains(id), let p = engine.position(id) else { return }
+        engine.seek(id, to: p + seconds)
     }
 
     func togglePause() {
